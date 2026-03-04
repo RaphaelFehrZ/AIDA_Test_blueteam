@@ -280,7 +280,20 @@ async def duplicate_assessment(
         credentials=original.credentials,
         access_info=original.access_info,
         category=original.category,
-        environment_notes=original.environment_notes
+        environment_notes=original.environment_notes,
+        stealth_profile=original.stealth_profile,
+        proxy_config=original.proxy_config,
+        custom_user_agent=original.custom_user_agent,
+        scan_delay=original.scan_delay,
+        max_rate=original.max_rate,
+        decoy_ips=original.decoy_ips,
+        source_port=original.source_port,
+        nmap_timing=original.nmap_timing,
+        fragmentation=original.fragmentation,
+        randomize_hosts=original.randomize_hosts,
+        extra_nmap_evasion=original.extra_nmap_evasion,
+        nikto_evasion=original.nikto_evasion,
+        nikto_tuning=original.nikto_tuning,
     )
 
     # Create assessment with workspace

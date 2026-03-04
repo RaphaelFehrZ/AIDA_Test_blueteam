@@ -440,6 +440,34 @@ def get_tool_definitions() -> List[Tool]:
             }
         ),
         Tool(
+            name="stealth_scan",
+            description="Run a purpose-built stealthy scan. Uses the assessment's stealth profile for maximum evasion. Preferred over scan() when operating against blue team / SOC-defended targets.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "technique": {
+                        "type": "string",
+                        "enum": ["port_discovery", "service_detection", "vuln_check", "web_crawl", "dns_enum"],
+                        "description": "Recon technique: port_discovery (top ports), service_detection (version scan), vuln_check (safe+vuln scripts), web_crawl (directory enum), dns_enum (passive subdomain enum)"
+                    },
+                    "target": {
+                        "type": "string",
+                        "description": "Target IP, domain, or URL"
+                    },
+                    "ports": {
+                        "type": "string",
+                        "description": "Optional port specification (e.g., '80,443', '1-1000')"
+                    },
+                    "intensity": {
+                        "type": "string",
+                        "enum": ["whisper", "low", "medium"],
+                        "description": "Intensity level within the stealth profile. whisper=maximum stealth, low=conservative, medium=moderate. Default: low"
+                    }
+                },
+                "required": ["technique", "target"]
+            }
+        ),
+        Tool(
             name="subdomain_enum",
             description="Perform subdomain enumeration using subfinder/amass",
             inputSchema={

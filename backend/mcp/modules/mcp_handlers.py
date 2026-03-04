@@ -87,6 +87,9 @@ async def handle_tool_call(name: str, arguments: dict, mcp_service) -> List[Text
         elif name == "scan":
             return await _handle_scan(arguments, mcp_service)
 
+        elif name == "stealth_scan":
+            return await _handle_stealth_scan(arguments, mcp_service)
+
         elif name == "subdomain_enum":
             return await _handle_subdomain_enum(arguments, mcp_service)
 
@@ -136,6 +139,7 @@ async def _handle_load_assessment(arguments: dict, mcp_service) -> List[TextCont
     # Set context
     mcp_service.current_assessment_id = assessment["id"]
     mcp_service.current_assessment_name = assessment["name"]
+    mcp_service.current_stealth_config = None  # Clear cache so it refreshes
 
     # If skip_data, return minimal response
     if skip_data:
@@ -197,8 +201,18 @@ async def _handle_load_assessment(arguments: dict, mcp_service) -> List[TextCont
         except Exception as e:
             # Continue without tree if error
             log.warning(f"Failed to generate workspace tree: {e}")
-    
 
+    # Display stealth profile if not normal
+    stealth_profile = assessment_data.get('stealth_profile', 'normal')
+    if stealth_profile and stealth_profile != 'normal':
+        try:
+            from stealth_profiles import resolve_stealth_config, format_stealth_summary
+            stealth_config = resolve_stealth_config(assessment_data)
+            mcp_service.current_stealth_config = stealth_config
+            response += "## Stealth Configuration\n\n"
+            response += format_stealth_summary(stealth_config) + "\n\n"
+        except Exception as e:
+            log.warning(f"Failed to load stealth config: {e}")
 
     # Add sections information
     sections = full_data.get('sections', [])
@@ -1338,20 +1352,40 @@ async def _handle_http_request(arguments: dict, mcp_service) -> List[TextContent
 # ========== Pentesting Tools Handlers ==========
 
 async def _handle_scan(arguments: dict, mcp_service) -> List[TextContent]:
-    """Handle scan with enhanced options for custom ports, wordlists, extensions, and more"""
+    """Handle scan with enhanced options for custom ports, wordlists, extensions, and more.
+    Automatically injects stealth/evasion flags based on assessment stealth profile."""
     if not mcp_service.current_container:
         return [TextContent(type="text", text="No container selected for scanning.")]
 
     scan_type = arguments["type"]
     target = arguments["target"]
-    
+
     # Optional parameters
     ports = arguments.get("ports")
     wordlist = arguments.get("wordlist", "common")
     extensions = arguments.get("extensions")
-    threads = arguments.get("threads", 10)
+    threads = arguments.get("threads")  # None = use profile default
     extra_flags = arguments.get("extra_flags", "")
-    
+
+    # Fetch stealth config
+    stealth_config = await mcp_service.get_stealth_config()
+
+    # Resolve threads from stealth profile if not explicitly provided
+    if stealth_config:
+        from stealth_profiles import (
+            build_nmap_stealth_flags,
+            build_web_fuzzer_stealth_flags,
+            build_nikto_stealth_flags,
+            get_stealth_threads,
+        )
+        if threads is None:
+            threads = get_stealth_threads(stealth_config)
+        nmap_flags = build_nmap_stealth_flags(stealth_config)
+    else:
+        if threads is None:
+            threads = 10
+        nmap_flags = ""
+
     # Wordlist mapping
     WORDLISTS = {
         "common": "/usr/share/dirb/wordlists/common.txt",
@@ -1361,49 +1395,57 @@ async def _handle_scan(arguments: dict, mcp_service) -> List[TextContent]:
         "raft-small": "/usr/share/seclists/Discovery/Web-Content/raft-small-words.txt",
         "raft-medium": "/usr/share/seclists/Discovery/Web-Content/raft-medium-directories.txt"
     }
-    
+
     selected_wordlist = WORDLISTS.get(wordlist, WORDLISTS["common"])
-    
+
     # Build commands dynamically based on scan type
     if scan_type == "nmap_quick":
         # Fast scan with version detection
         port_arg = f"-p {ports}" if ports else "-F"  # -F = fast (top 100 ports)
-        command = f"nmap -sV {port_arg} {extra_flags} {target}".strip()
-        
+        command = f"nmap -sV {port_arg} {nmap_flags} {extra_flags} {target}".strip()
+
     elif scan_type == "nmap_full":
-        # Comprehensive scan with all ports
+        # Comprehensive scan with all ports — timing from stealth profile (not hardcoded)
         port_arg = f"-p {ports}" if ports else "-p-"  # All ports
-        command = f"nmap -sS -sV -O -T4 {port_arg} {extra_flags} {target}".strip()
-        
+        command = f"nmap -sS -sV -O {port_arg} {nmap_flags} {extra_flags} {target}".strip()
+
     elif scan_type == "nmap_vuln":
         # Vulnerability script scan
         port_arg = f"-p {ports}" if ports else ""
-        command = f"nmap -sV --script=vuln {port_arg} {extra_flags} {target}".strip()
-        
+        command = f"nmap -sV --script=vuln {port_arg} {nmap_flags} {extra_flags} {target}".strip()
+
     elif scan_type == "gobuster":
         # Ensure target has protocol
         url = target if target.startswith(("http://", "https://")) else f"http://{target}"
         ext_arg = f"-x {extensions}" if extensions else ""
-        command = f"gobuster dir -u {url} -w {selected_wordlist} -t {threads} {ext_arg} {extra_flags}".strip()
-        
+        web_flags = build_web_fuzzer_stealth_flags(stealth_config, "gobuster") if stealth_config else ""
+        command = f"gobuster dir -u {url} -w {selected_wordlist} -t {threads} {ext_arg} {web_flags} {extra_flags}".strip()
+
     elif scan_type == "ffuf":
         # Fast web fuzzer - ensure target has FUZZ placeholder or add one
         url = target if target.startswith(("http://", "https://")) else f"http://{target}"
         if "FUZZ" not in url:
             url = f"{url.rstrip('/')}/FUZZ"
         ext_arg = f"-e {extensions}" if extensions else ""
-        command = f"ffuf -u {url} -w {selected_wordlist} -t {threads} {ext_arg} {extra_flags}".strip()
-        
+        web_flags = build_web_fuzzer_stealth_flags(stealth_config, "ffuf") if stealth_config else ""
+        command = f"ffuf -u {url} -w {selected_wordlist} -t {threads} {ext_arg} {web_flags} {extra_flags}".strip()
+
     elif scan_type == "dirb":
         url = target if target.startswith(("http://", "https://")) else f"http://{target}"
         ext_arg = f"-X .{extensions.replace(',', ',.')}" if extensions else ""
-        command = f"dirb {url} {selected_wordlist} {ext_arg} {extra_flags}".strip()
-        
+        web_flags = build_web_fuzzer_stealth_flags(stealth_config, "dirb") if stealth_config else ""
+        command = f"dirb {url} {selected_wordlist} {ext_arg} {web_flags} {extra_flags}".strip()
+
     elif scan_type == "nikto":
-        command = f"nikto -h {target} {extra_flags}".strip()
-        
+        nikto_flags = build_nikto_stealth_flags(stealth_config) if stealth_config else ""
+        command = f"nikto -h {target} {nikto_flags} {extra_flags}".strip()
+
     else:
         return [TextContent(type="text", text=f"Unknown scan type: {scan_type}")]
+
+    # Clean up any double spaces from empty flag strings
+    import re as _re
+    command = _re.sub(r'\s+', ' ', command).strip()
 
     # Check if tool is available
     tool_name = command.split()[0]
@@ -1411,7 +1453,99 @@ async def _handle_scan(arguments: dict, mcp_service) -> List[TextContent]:
         return [TextContent(type="text",
                             text=f"Tool `{tool_name}` not available in container.")]
 
+    # Build response with stealth indicator
     response = f"**Starting {scan_type} scan on `{target}`**\n"
+    if stealth_config and stealth_config.get("profile_name", "normal") != "normal":
+        profile_name = stealth_config["profile_name"].upper()
+        response += f"Stealth Profile: **{profile_name}**\n"
+    response += f"Command: `{command}`\n\n"
+
+    result = await mcp_service.execute_container_command(
+        mcp_service.current_container, command
+    )
+
+    if result["success"]:
+        response += f"**Results:**\n```\n{result['stdout']}\n```"
+        if result.get("stderr"):
+            response += f"\n**Warnings:**\n```\n{result['stderr']}\n```"
+    else:
+        error_msg = result.get("stderr") or result.get("error", "Unknown error")
+        response += f"**Scan failed:**\n```\n{error_msg}\n```"
+
+    return [TextContent(type="text", text=response)]
+
+
+async def _handle_stealth_scan(arguments: dict, mcp_service) -> List[TextContent]:
+    """Handle stealth_scan — purpose-built stealthy recon using assessment stealth profile."""
+    if not mcp_service.current_container:
+        return [TextContent(type="text", text="No container selected for scanning.")]
+
+    technique = arguments["technique"]
+    target = arguments["target"]
+    ports = arguments.get("ports")
+    intensity = arguments.get("intensity", "low")
+
+    # Fetch stealth config
+    stealth_config = await mcp_service.get_stealth_config()
+
+    if stealth_config:
+        from stealth_profiles import build_nmap_stealth_flags, build_web_fuzzer_stealth_flags, get_stealth_threads
+        nmap_flags = build_nmap_stealth_flags(stealth_config)
+    else:
+        nmap_flags = ""
+
+    # Intensity modifiers (further restrict within profile)
+    intensity_overrides = {
+        "whisper": {"max_rate": 2, "scan_delay": "10s"},
+        "low": {},  # use profile as-is
+        "medium": {},  # use profile as-is
+    }
+    intensity_extra = ""
+    overrides = intensity_overrides.get(intensity, {})
+    if overrides.get("max_rate"):
+        intensity_extra += f" --max-rate {overrides['max_rate']}"
+    if overrides.get("scan_delay"):
+        intensity_extra += f" --scan-delay {overrides['scan_delay']}"
+
+    # Map techniques to commands
+    if technique == "port_discovery":
+        port_arg = f"-p {ports}" if ports else "--top-ports 100"
+        command = f"nmap -sS -Pn {port_arg} {nmap_flags}{intensity_extra} {target}"
+
+    elif technique == "service_detection":
+        port_arg = f"-p {ports}" if ports else "--top-ports 50"
+        command = f"nmap -sV --version-intensity 2 {port_arg} {nmap_flags}{intensity_extra} {target}"
+
+    elif technique == "vuln_check":
+        port_arg = f"-p {ports}" if ports else ""
+        command = f"nmap -sV --script=safe,vuln {port_arg} {nmap_flags}{intensity_extra} {target}"
+
+    elif technique == "web_crawl":
+        url = target if target.startswith(("http://", "https://")) else f"http://{target}"
+        web_threads = 1 if intensity == "whisper" else get_stealth_threads(stealth_config) if stealth_config else 3
+        web_flags = build_web_fuzzer_stealth_flags(stealth_config, "gobuster") if stealth_config else ""
+        command = f"gobuster dir -u {url} -w /usr/share/dirb/wordlists/common.txt -t {web_threads} {web_flags}"
+
+    elif technique == "dns_enum":
+        # Passive DNS enumeration — inherently stealthy
+        command = f"subfinder -d {target} -silent"
+
+    else:
+        return [TextContent(type="text", text=f"Unknown stealth scan technique: {technique}")]
+
+    # Clean up double spaces
+    import re as _re
+    command = _re.sub(r'\s+', ' ', command).strip()
+
+    # Check tool availability
+    tool_name = command.split()[0]
+    if not await mcp_service.check_tool_availability(tool_name):
+        return [TextContent(type="text", text=f"Tool `{tool_name}` not available in container.")]
+
+    # Build response
+    profile_name = stealth_config.get("profile_name", "normal").upper() if stealth_config else "NORMAL"
+    response = f"**Stealth Scan: {technique}** on `{target}`\n"
+    response += f"Profile: **{profile_name}** | Intensity: **{intensity}**\n"
     response += f"Command: `{command}`\n\n"
 
     result = await mcp_service.execute_container_command(

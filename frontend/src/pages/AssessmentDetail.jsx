@@ -52,6 +52,7 @@ const AssessmentDetail = () => {
   const [openingWorkspace, setOpeningWorkspace] = useState(false);
   const [showChangeContainerModal, setShowChangeContainerModal] = useState(false);
   const [showMarkdownModal, setShowMarkdownModal] = useState(false);
+  const [showStealthConfig, setShowStealthConfig] = useState(false);
 
   // WebSocket connection for real-time updates
   const { subscribe, isConnected } = useWebSocket(id);
@@ -360,6 +361,23 @@ const AssessmentDetail = () => {
                   </span>
                 </>
               )}
+              {assessment.stealth_profile && assessment.stealth_profile !== 'normal' && (
+                <>
+                  <span>•</span>
+                  <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium ${
+                    assessment.stealth_profile === 'ghost'
+                      ? 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300'
+                      : assessment.stealth_profile === 'careful'
+                        ? 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300'
+                        : 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300'
+                  }`}>
+                    {assessment.stealth_profile === 'ghost' && '👻'}
+                    {assessment.stealth_profile === 'careful' && '🔇'}
+                    {assessment.stealth_profile === 'aggressive' && '⚡'}
+                    {assessment.stealth_profile.charAt(0).toUpperCase() + assessment.stealth_profile.slice(1)}
+                  </span>
+                </>
+              )}
               <span>•</span>
               <span>{assessment.status}</span>
               {assessment.container_name && (
@@ -542,6 +560,103 @@ const AssessmentDetail = () => {
             </div>
           </div>
         </div>
+      </div>
+
+      {/* Stealth Configuration */}
+      <div className="bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-lg">
+        <button
+          onClick={() => setShowStealthConfig(!showStealthConfig)}
+          className="w-full px-4 py-3 border-b border-neutral-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-900 flex items-center justify-between rounded-t-lg"
+        >
+          <div className="flex items-center gap-2">
+            <Shield className="w-4 h-4 text-purple-500" />
+            <h2 className="text-sm font-semibold text-gray-800 dark:text-neutral-100">Stealth Configuration</h2>
+            {assessment.stealth_profile && assessment.stealth_profile !== 'normal' && (
+              <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${
+                assessment.stealth_profile === 'ghost'
+                  ? 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300'
+                  : assessment.stealth_profile === 'careful'
+                    ? 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300'
+                    : 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300'
+              }`}>
+                {assessment.stealth_profile.toUpperCase()}
+              </span>
+            )}
+          </div>
+          <svg className={`w-4 h-4 text-neutral-400 transition-transform ${showStealthConfig ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+        {showStealthConfig && (
+          <div className="p-4 space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+              {/* Stealth Profile */}
+              <div>
+                <label className="block font-medium text-gray-700 dark:text-neutral-300 mb-1">Profile</label>
+                <select
+                  value={assessment.stealth_profile || 'normal'}
+                  onChange={(e) => updateAssessment('stealth_profile', e.target.value)}
+                  className="input text-sm"
+                >
+                  <option value="normal">Normal</option>
+                  <option value="careful">Careful</option>
+                  <option value="ghost">Ghost</option>
+                  <option value="aggressive">Aggressive</option>
+                </select>
+              </div>
+              {/* Proxy */}
+              <div>
+                <span className="font-medium text-gray-700 dark:text-neutral-300">Proxy:</span>
+                <EditableField
+                  value={assessment.proxy_config || ''}
+                  onSave={(value) => updateAssessment('proxy_config', value)}
+                  placeholder="socks5://127.0.0.1:9050"
+                  className="text-gray-900 dark:text-neutral-100 ml-2"
+                />
+              </div>
+              {/* User-Agent */}
+              <div>
+                <span className="font-medium text-gray-700 dark:text-neutral-300">User-Agent:</span>
+                <EditableField
+                  value={assessment.custom_user_agent || ''}
+                  onSave={(value) => updateAssessment('custom_user_agent', value)}
+                  placeholder="Custom user-agent string"
+                  className="text-gray-900 dark:text-neutral-100 ml-2"
+                />
+              </div>
+              {/* Scan Delay */}
+              <div>
+                <span className="font-medium text-gray-700 dark:text-neutral-300">Scan Delay:</span>
+                <EditableField
+                  value={assessment.scan_delay || ''}
+                  onSave={(value) => updateAssessment('scan_delay', value)}
+                  placeholder="e.g. 500ms, 2s, 1-5s"
+                  className="text-gray-900 dark:text-neutral-100 ml-2"
+                />
+              </div>
+              {/* Max Rate */}
+              <div>
+                <span className="font-medium text-gray-700 dark:text-neutral-300">Max Rate:</span>
+                <EditableField
+                  value={assessment.max_rate != null ? String(assessment.max_rate) : ''}
+                  onSave={(value) => updateAssessment('max_rate', value ? parseInt(value) : null)}
+                  placeholder="requests/sec"
+                  className="text-gray-900 dark:text-neutral-100 ml-2"
+                />
+              </div>
+              {/* Decoy IPs */}
+              <div>
+                <span className="font-medium text-gray-700 dark:text-neutral-300">Decoy IPs:</span>
+                <EditableField
+                  value={assessment.decoy_ips || ''}
+                  onSave={(value) => updateAssessment('decoy_ips', value)}
+                  placeholder="RND:10 or comma-separated IPs"
+                  className="text-gray-900 dark:text-neutral-100 ml-2"
+                />
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Credentials & Tokens Section - Minimalist */}

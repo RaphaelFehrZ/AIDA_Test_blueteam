@@ -21,6 +21,20 @@ class AssessmentBase(BaseModel):
     category: Optional[str] = None
     environment: Optional[str] = "non_specifie"
     environment_notes: Optional[str] = None
+    # Stealth & Evasion
+    stealth_profile: Optional[str] = "normal"
+    proxy_config: Optional[str] = None
+    custom_user_agent: Optional[str] = None
+    scan_delay: Optional[str] = None
+    max_rate: Optional[int] = None
+    decoy_ips: Optional[str] = None
+    source_port: Optional[int] = None
+    nmap_timing: Optional[str] = None
+    fragmentation: Optional[bool] = False
+    randomize_hosts: Optional[bool] = False
+    extra_nmap_evasion: Optional[str] = None
+    nikto_evasion: Optional[str] = None
+    nikto_tuning: Optional[str] = None
 
 
 class AssessmentCreate(AssessmentBase):
@@ -46,6 +60,20 @@ class AssessmentUpdate(BaseModel):
     environment_notes: Optional[str] = None
     status: Optional[str] = None  # active, completed, archived
     folder_id: Optional[int] = None
+    # Stealth & Evasion
+    stealth_profile: Optional[str] = None
+    proxy_config: Optional[str] = None
+    custom_user_agent: Optional[str] = None
+    scan_delay: Optional[str] = None
+    max_rate: Optional[int] = None
+    decoy_ips: Optional[str] = None
+    source_port: Optional[int] = None
+    nmap_timing: Optional[str] = None
+    fragmentation: Optional[bool] = None
+    randomize_hosts: Optional[bool] = None
+    extra_nmap_evasion: Optional[str] = None
+    nikto_evasion: Optional[str] = None
+    nikto_tuning: Optional[str] = None
 
 
 class AssessmentResponse(AssessmentBase):
@@ -79,6 +107,20 @@ class AssessmentListResponse(BaseModel):
     workspace_path: Optional[str]
     container_name: Optional[str]
     folder_id: Optional[int] = None
+    # Stealth & Evasion
+    stealth_profile: Optional[str] = "normal"
+    proxy_config: Optional[str] = None
+    custom_user_agent: Optional[str] = None
+    scan_delay: Optional[str] = None
+    max_rate: Optional[int] = None
+    decoy_ips: Optional[str] = None
+    source_port: Optional[int] = None
+    nmap_timing: Optional[str] = None
+    fragmentation: Optional[bool] = False
+    randomize_hosts: Optional[bool] = False
+    extra_nmap_evasion: Optional[str] = None
+    nikto_evasion: Optional[str] = None
+    nikto_tuning: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 

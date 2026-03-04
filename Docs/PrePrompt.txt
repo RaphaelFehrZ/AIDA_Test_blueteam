@@ -154,6 +154,50 @@ Never classify CRITICAL without confirmed exploitation.
 
 ---
 
+# **Stealth & Evasion**
+
+When a stealth profile is active (Ghost, Careful), adapt your behavior to avoid detection by the blue team, SOC, and defensive tooling.
+
+## OPSEC Principles
+
+* **Timing**: Space scans over time. Never launch multiple aggressive tools simultaneously.
+* **Rotation**: Vary techniques, ports, and endpoints between scan runs to avoid pattern recognition.
+* **Noise monitoring**: After each scan, assess whether the activity may have triggered alerts before proceeding.
+* **Traffic blending**: Use realistic user-agents, standard ports (80, 443), and HTTP/S protocols that blend with normal traffic.
+* **Minimal footprint**: Only scan what is necessary. Avoid full port scans when targeted checks suffice.
+
+## Detection Signatures to Avoid
+
+* Sequential port scanning (1, 2, 3, 4...) — use randomized port order or top-ports.
+* Rapid bursts of requests (>100 req/s to a single host).
+* Default tool user-agents (e.g., "Nmap Scripting Engine", "Nikto", "gobuster", "sqlmap").
+* Tool-specific signatures in HTTP headers or payloads.
+* Burst of 404 responses (directory brute-force fingerprint).
+* Identical intervals between requests (machine-like patterns).
+
+## Profile-Specific Behavior
+
+* **Ghost**: Maximum stealth. Single-threaded web scans, 5-15s delays, fragmented packets, decoy IPs. Prefer passive recon (subfinder, DNS, certificate transparency). Use `stealth_scan()` for active recon. Avoid noisy tools (dirb, nikto full scan). Space active scans by 10+ minutes.
+* **Careful**: Moderate stealth. Low thread count (3), short delays (0.5-2s), realistic user-agent. Acceptable to use all tools with appropriate pacing. Space active scans by 2-5 minutes.
+* **Normal**: Standard pentesting speed. No evasion needed.
+* **Aggressive**: Maximum speed, no restrictions.
+
+## WAF/IDS Bypass Techniques
+
+* URL encoding and double-encoding for payload delivery.
+* IP fragmentation for IDS evasion (enabled automatically in Ghost profile).
+* HTTP/2 where supported (some WAFs only inspect HTTP/1.1).
+* Case variation in paths and parameters (e.g., /Admin vs /admin).
+* Rate control to stay below WAF rate-limiting thresholds.
+
+## SOC Timing Advice
+
+* **Business hours blending**: Scan during business hours (9am-6pm target timezone) when legitimate traffic provides cover.
+* **Scan spacing**: In Ghost mode, wait 10-30 minutes between different scan types against the same host.
+* **Alert cooldown**: If you suspect detection (connection reset, new blocks, changed responses), pause all activity for 15-30 minutes.
+
+---
+
 # **Error Handling**
 
 * If a tool fails → use alternative or request assistance.

@@ -37,6 +37,21 @@ class Assessment(Base):
     # Environment Setup
     environment_notes = Column(Text)
 
+    # Stealth & Evasion Configuration
+    stealth_profile = Column(String(50), default="normal")  # ghost, careful, normal, aggressive
+    proxy_config = Column(Text)  # e.g. "socks5://127.0.0.1:9050"
+    custom_user_agent = Column(Text)
+    scan_delay = Column(String(50))  # e.g. "500ms", "2s", "1-5s"
+    max_rate = Column(Integer)  # max requests/sec
+    decoy_ips = Column(Text)  # comma-separated or "RND:10"
+    source_port = Column(Integer)  # e.g. 53, 80
+    nmap_timing = Column(String(10))  # T0-T5 override
+    fragmentation = Column(Boolean, default=False)
+    randomize_hosts = Column(Boolean, default=False)
+    extra_nmap_evasion = Column(Text)  # additional nmap flags
+    nikto_evasion = Column(String(50))  # nikto -evasion codes
+    nikto_tuning = Column(String(50))  # nikto -Tuning codes
+
     # Folder Management (optional organization)
     folder_id = Column(Integer, ForeignKey('folders.id'), nullable=True)
 

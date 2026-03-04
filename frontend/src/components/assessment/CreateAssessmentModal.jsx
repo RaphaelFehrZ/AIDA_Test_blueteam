@@ -14,6 +14,7 @@ const CreateAssessmentModal = ({ onClose, onSuccess }) => {
     end_date: '',
     category: '',
     environment: 'non_specifie',
+    stealth_profile: 'normal',
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -142,6 +143,29 @@ const CreateAssessmentModal = ({ onClose, onSuccess }) => {
                 <option value="production">Production</option>
                 <option value="dev">Dev</option>
               </select>
+            </div>
+
+            {/* Stealth Profile */}
+            <div>
+              <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-2">
+                Stealth Profile
+              </label>
+              <select
+                value={formData.stealth_profile}
+                onChange={(e) => setFormData({ ...formData, stealth_profile: e.target.value })}
+                className="input"
+              >
+                <option value="normal">Normal — Standard speed, no evasion</option>
+                <option value="careful">Careful — Low threads, short delays, realistic UA</option>
+                <option value="ghost">Ghost — Maximum stealth, fragmentation, decoys</option>
+                <option value="aggressive">Aggressive — Maximum speed, no restrictions</option>
+              </select>
+              <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+                {formData.stealth_profile === 'ghost' && 'Single-threaded scans, 5-15s delays, packet fragmentation, decoy IPs. For SOC-defended targets.'}
+                {formData.stealth_profile === 'careful' && 'Low thread count (3), 0.5-2s delays, realistic user-agent. Balanced stealth.'}
+                {formData.stealth_profile === 'normal' && 'Standard pentesting speed. No evasion techniques applied.'}
+                {formData.stealth_profile === 'aggressive' && 'Maximum parallelism (50 threads), no delays. Fast but noisy.'}
+              </p>
             </div>
 
             {/* Scope */}

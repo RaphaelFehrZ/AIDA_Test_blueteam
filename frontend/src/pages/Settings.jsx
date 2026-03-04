@@ -15,7 +15,8 @@ import {
   Save,
   Moon,
   Sun,
-  FolderOpen
+  FolderOpen,
+  Shield
 } from '../components/icons';
 import apiClient from '../services/api';
 import workspaceService from '../services/workspaceService';
@@ -441,6 +442,7 @@ const Settings = () => {
 
   const tabs = [
     { id: 'general', label: 'General', icon: SettingsIcon },
+    { id: 'stealth', label: 'Stealth', icon: Shield },
     { id: 'tools', label: 'Tools', icon: Terminal },
     { id: 'about', label: 'About', icon: Info }
   ];
@@ -941,6 +943,93 @@ const Settings = () => {
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {/* TAB: STEALTH */}
+        {activeTab === 'stealth' && (
+          <div className="space-y-6">
+            {/* Profile Reference Cards */}
+            <div>
+              <h2 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100 mb-3">Stealth Profiles Reference</h2>
+              <p className="text-sm text-neutral-600 dark:text-neutral-400 mb-4">
+                Stealth profiles control how AIDA's AI adapts scan commands to avoid detection by blue teams, SOCs, and defensive tooling. Set per-assessment in the assessment's Stealth Configuration section.
+              </p>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Ghost */}
+                <div className="bg-white dark:bg-neutral-800 border border-purple-200 dark:border-purple-800 rounded-lg p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="text-lg">👻</span>
+                    <h3 className="font-semibold text-purple-700 dark:text-purple-300">Ghost</h3>
+                  </div>
+                  <p className="text-xs text-neutral-600 dark:text-neutral-400 mb-3">Maximum stealth for SOC-defended targets.</p>
+                  <div className="space-y-1 text-xs text-neutral-700 dark:text-neutral-300">
+                    <div className="flex justify-between"><span>Nmap Timing</span><span className="font-mono">T0</span></div>
+                    <div className="flex justify-between"><span>Max Rate</span><span className="font-mono">5/s</span></div>
+                    <div className="flex justify-between"><span>Web Threads</span><span className="font-mono">1</span></div>
+                    <div className="flex justify-between"><span>Delay</span><span className="font-mono">5-15s</span></div>
+                    <div className="flex justify-between"><span>Fragmentation</span><span className="text-green-600">Yes</span></div>
+                    <div className="flex justify-between"><span>Decoys</span><span className="font-mono">RND:10</span></div>
+                    <div className="flex justify-between"><span>User-Agent</span><span>Chrome 120</span></div>
+                  </div>
+                </div>
+
+                {/* Careful */}
+                <div className="bg-white dark:bg-neutral-800 border border-yellow-200 dark:border-yellow-800 rounded-lg p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="text-lg">🔇</span>
+                    <h3 className="font-semibold text-yellow-700 dark:text-yellow-300">Careful</h3>
+                  </div>
+                  <p className="text-xs text-neutral-600 dark:text-neutral-400 mb-3">Moderate stealth with balanced speed.</p>
+                  <div className="space-y-1 text-xs text-neutral-700 dark:text-neutral-300">
+                    <div className="flex justify-between"><span>Nmap Timing</span><span className="font-mono">T2</span></div>
+                    <div className="flex justify-between"><span>Max Rate</span><span className="font-mono">50/s</span></div>
+                    <div className="flex justify-between"><span>Web Threads</span><span className="font-mono">3</span></div>
+                    <div className="flex justify-between"><span>Delay</span><span className="font-mono">0.5-2s</span></div>
+                    <div className="flex justify-between"><span>Fragmentation</span><span className="text-neutral-400">No</span></div>
+                    <div className="flex justify-between"><span>Decoys</span><span className="text-neutral-400">None</span></div>
+                    <div className="flex justify-between"><span>User-Agent</span><span>Chrome 120</span></div>
+                  </div>
+                </div>
+
+                {/* Normal */}
+                <div className="bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-lg p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="text-lg">🔍</span>
+                    <h3 className="font-semibold text-neutral-700 dark:text-neutral-300">Normal</h3>
+                  </div>
+                  <p className="text-xs text-neutral-600 dark:text-neutral-400 mb-3">Standard pentesting speed, no evasion.</p>
+                  <div className="space-y-1 text-xs text-neutral-700 dark:text-neutral-300">
+                    <div className="flex justify-between"><span>Nmap Timing</span><span className="font-mono">T4</span></div>
+                    <div className="flex justify-between"><span>Max Rate</span><span className="text-neutral-400">Unlimited</span></div>
+                    <div className="flex justify-between"><span>Web Threads</span><span className="font-mono">10</span></div>
+                    <div className="flex justify-between"><span>Delay</span><span className="text-neutral-400">None</span></div>
+                    <div className="flex justify-between"><span>Fragmentation</span><span className="text-neutral-400">No</span></div>
+                    <div className="flex justify-between"><span>Decoys</span><span className="text-neutral-400">None</span></div>
+                    <div className="flex justify-between"><span>User-Agent</span><span className="text-neutral-400">Default</span></div>
+                  </div>
+                </div>
+
+                {/* Aggressive */}
+                <div className="bg-white dark:bg-neutral-800 border border-red-200 dark:border-red-800 rounded-lg p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="text-lg">⚡</span>
+                    <h3 className="font-semibold text-red-700 dark:text-red-300">Aggressive</h3>
+                  </div>
+                  <p className="text-xs text-neutral-600 dark:text-neutral-400 mb-3">Maximum speed, no restrictions.</p>
+                  <div className="space-y-1 text-xs text-neutral-700 dark:text-neutral-300">
+                    <div className="flex justify-between"><span>Nmap Timing</span><span className="font-mono">T5</span></div>
+                    <div className="flex justify-between"><span>Max Rate</span><span className="text-neutral-400">Unlimited</span></div>
+                    <div className="flex justify-between"><span>Web Threads</span><span className="font-mono">50</span></div>
+                    <div className="flex justify-between"><span>Delay</span><span className="text-neutral-400">None</span></div>
+                    <div className="flex justify-between"><span>Fragmentation</span><span className="text-neutral-400">No</span></div>
+                    <div className="flex justify-between"><span>Decoys</span><span className="text-neutral-400">None</span></div>
+                    <div className="flex justify-between"><span>User-Agent</span><span className="text-neutral-400">Default</span></div>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         )}
 

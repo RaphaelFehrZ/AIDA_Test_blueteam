@@ -44,6 +44,7 @@ class AidaMCPService:
         self.is_initialized: bool = False
         self.tool_cache: Dict[str, bool] = {}
         self.current_target: Optional[str] = None
+        self.current_stealth_config: Optional[Dict[str, Any]] = None
 
         # Output formatting settings
         self.output_max_length: int = 5000  # Default value
@@ -430,6 +431,30 @@ class AidaMCPService:
             file_log.warning(f"Error fetching command_history_limit setting: {e}, using default: {self.command_history_limit}")
 
         return self.command_history_limit
+
+    async def get_stealth_config(self) -> Optional[Dict[str, Any]]:
+        """Get resolved stealth config for the current assessment (with cache)."""
+        # Return cached config if available
+        if self.current_stealth_config is not None:
+            return self.current_stealth_config
+
+        if not self.current_assessment_id:
+            return None
+
+        try:
+            response = await self.http_client.get(
+                f"{self.backend_url}/assessments/{self.current_assessment_id}"
+            )
+            if response.status_code == 200:
+                assessment_data = response.json()
+                from stealth_profiles import resolve_stealth_config
+                self.current_stealth_config = resolve_stealth_config(assessment_data)
+                file_log.info(f"Loaded stealth config: profile={self.current_stealth_config.get('profile_name', 'normal')}")
+                return self.current_stealth_config
+        except Exception as e:
+            file_log.warning(f"Failed to load stealth config: {e}")
+
+        return None
 
     def format_output(self, output: str, max_length: Optional[int] = None) -> str:
         """Format and truncate output for display

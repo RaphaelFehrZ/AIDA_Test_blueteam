@@ -142,6 +142,13 @@ const CommandHistory = ({ commands }) => {
                         {(cmd.source_code?.split('\n').find(l => l.trim()) || 'python script').slice(0, 60)}
                       </code>
                     </span>
+                  ) : cmd.command_type === 'http' ? (
+                    <span className="inline-flex items-center gap-1.5 min-w-0">
+                      <span className="flex-shrink-0 px-1.5 py-0.5 text-xs font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 rounded font-mono">http</span>
+                      <code className="text-xs font-mono text-gray-500 dark:text-neutral-400 truncate">
+                        {cmd.command?.length > 60 ? cmd.command.substring(0, 60) + '...' : cmd.command}
+                      </code>
+                    </span>
                   ) : (
                     <code className="text-xs font-mono text-gray-900 dark:text-neutral-100 break-all">
                       {cmd.command}
@@ -215,6 +222,27 @@ const CommandHistory = ({ commands }) => {
                           </button>
                         </div>
                         <pre className="bg-gray-900 dark:bg-black text-emerald-300 p-2 rounded font-mono text-xs max-h-48 overflow-auto whitespace-pre-wrap">
+                          {cmd.source_code}
+                        </pre>
+                      </div>
+                    )}
+
+                    {/* HTTP generated script block */}
+                    {cmd.command_type === 'http' && cmd.source_code && (
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <h4 className="text-xs font-semibold text-blue-700 dark:text-blue-400 flex items-center gap-1">
+                            HTTP Script
+                          </h4>
+                          <button
+                            onClick={() => copyToClipboard(cmd.source_code)}
+                            className="flex items-center gap-1 text-xs text-gray-500 dark:text-neutral-400 hover:text-gray-700 dark:hover:text-neutral-200 px-1.5 py-0.5 rounded hover:bg-gray-200 dark:hover:bg-neutral-800 transition-colors"
+                          >
+                            <Copy className="w-3 h-3" />
+                            Copy
+                          </button>
+                        </div>
+                        <pre className="bg-gray-900 dark:bg-black text-blue-300 p-2 rounded font-mono text-xs max-h-48 overflow-auto whitespace-pre-wrap">
                           {cmd.source_code}
                         </pre>
                       </div>

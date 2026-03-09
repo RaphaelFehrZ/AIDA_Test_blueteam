@@ -11,7 +11,7 @@ from sqlalchemy import select, or_
 
 from database import get_db, get_async_db
 from models import CommandHistory, Assessment, Credential
-from schemas.command import CommandExecute, PythonExecRequest, CommandResponse, CommandsPaginatedResponse, CommandWithAssessmentResponse
+from schemas.command import CommandExecute, PythonExecRequest, HttpRequestRequest, CommandResponse, CommandsPaginatedResponse, CommandWithAssessmentResponse
 from services.container_service import ContainerService
 
 # Router for assessment-specific commands
@@ -205,6 +205,63 @@ async def execute_python(
         assessment_id=assessment_id,
         code=code,
         phase=payload.phase,
+        db=db
+    )
+
+    return result
+
+
+@router.post("/http-request", response_model=CommandResponse)
+async def http_request_endpoint(
+    assessment_id: int,
+    payload: HttpRequestRequest,
+    db: AsyncSession = Depends(get_async_db)
+):
+    """Make a structured HTTP request from inside Exegol (no curl escaping).
+
+    Generates a Python requests script dynamically and pipes it via stdin to
+    python3 inside the container. Execution stays in Exegol (network isolation,
+    VPN access, Burp proxy routing).
+
+    Supports {{PLACEHOLDER}} substitution on url, headers, cookies, and auth.
+    """
+    # Verify assessment exists
+    stmt = select(Assessment).filter(Assessment.id == assessment_id)
+    result = await db.execute(stmt)
+    assessment = result.scalar_one_or_none()
+
+    if not assessment:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Assessment with id {assessment_id} not found"
+        )
+
+    # Apply credential substitution to all string fields that support {{PLACEHOLDER}}
+    payload.url = await _substitute_credentials(payload.url, assessment_id, db)
+
+    if payload.headers:
+        payload.headers = {
+            k: await _substitute_credentials(v, assessment_id, db)
+            for k, v in payload.headers.items()
+        }
+
+    if payload.cookies:
+        payload.cookies = {
+            k: await _substitute_credentials(v, assessment_id, db)
+            for k, v in payload.cookies.items()
+        }
+
+    if payload.auth:
+        payload.auth = [
+            await _substitute_credentials(v, assessment_id, db)
+            for v in payload.auth
+        ]
+
+    # Execute inside Exegol via generated Python script
+    container_service = ContainerService()
+    result = await container_service.execute_and_log_http_request(
+        assessment_id=assessment_id,
+        params=payload,
         db=db
     )
 

@@ -21,6 +21,7 @@ from schemas.pending_command import (
     PendingCommandsListResponse
 )
 from services.container_service import ContainerService
+from schemas.command import HttpRequestRequest
 from websocket.manager import manager
 from websocket.events import create_event, EventType
 
@@ -359,6 +360,15 @@ async def approve_command(
             assessment_id=pending_cmd.assessment_id,
             code=pending_cmd.command,
             phase=pending_cmd.phase,
+            db=db
+        )
+    elif pending_cmd.command_type == "http":
+        # pending_cmd.command stores the JSON-serialized HttpRequestRequest params
+        http_params_dict = json.loads(pending_cmd.command)
+        http_params = HttpRequestRequest(**http_params_dict)
+        exec_result = await container_service.execute_and_log_http_request(
+            assessment_id=pending_cmd.assessment_id,
+            params=http_params,
             db=db
         )
     else:

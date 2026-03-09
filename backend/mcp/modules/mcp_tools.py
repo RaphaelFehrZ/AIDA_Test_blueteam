@@ -326,6 +326,78 @@ def get_tool_definitions() -> List[Tool]:
             }
         ),
 
+        Tool(
+            name="http_request",
+            description=(
+                "Make HTTP requests from inside Exegol — no curl escaping hell. "
+                "Pass structured params (method, headers, json body, cookies, auth, proxy). "
+                "Execution stays inside the container (network isolation, VPN access). "
+                "Use proxy='http://127.0.0.1:8080' to route through Burp Suite. "
+                "Supports {{PLACEHOLDER}} credential substitution on url, headers, cookies, auth."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "Target URL (supports {{PLACEHOLDER}} substitution)"
+                    },
+                    "method": {
+                        "type": "string",
+                        "enum": ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
+                        "description": "HTTP method (default: GET)"
+                    },
+                    "headers": {
+                        "type": "object",
+                        "description": "Request headers as key-value pairs (values support {{PLACEHOLDER}})"
+                    },
+                    "params": {
+                        "type": "object",
+                        "description": "Query string parameters as key-value pairs"
+                    },
+                    "data": {
+                        "type": ["object", "string"],
+                        "description": "Form data (dict) or raw body string"
+                    },
+                    "json": {
+                        "type": "object",
+                        "description": "JSON body — auto-sets Content-Type: application/json"
+                    },
+                    "cookies": {
+                        "type": "object",
+                        "description": "Cookies as key-value pairs (values support {{PLACEHOLDER}})"
+                    },
+                    "auth": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "maxItems": 2,
+                        "description": "Basic auth as [username, password] (supports {{PLACEHOLDER}})"
+                    },
+                    "timeout": {
+                        "type": "number",
+                        "description": "Request timeout in seconds (default: 30)"
+                    },
+                    "follow_redirects": {
+                        "type": "boolean",
+                        "description": "Follow HTTP redirects (default: true)"
+                    },
+                    "verify_ssl": {
+                        "type": "boolean",
+                        "description": "Verify SSL certificate (default: true, set false for self-signed)"
+                    },
+                    "proxy": {
+                        "type": "string",
+                        "description": "Proxy URL e.g. 'http://127.0.0.1:8080' to route through Burp Suite"
+                    },
+                    "phase": {
+                        "type": "string",
+                        "description": "Current assessment phase (for logging)"
+                    }
+                },
+                "required": ["url"]
+            }
+        ),
+
         # ========== Pentesting Tools (5 tools) ==========
         Tool(
             name="scan",

@@ -108,6 +108,11 @@ const PendingCommandModal = ({ pendingCommand, onClose, onApprove, onReject }) =
                     <span className="px-1.5 py-0.5 text-xs font-medium bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400 rounded font-mono">python</span>
                     <span className="text-gray-500 dark:text-neutral-400 font-normal text-xs">code to execute</span>
                   </span>
+                ) : pendingCommand.command_type === 'http' ? (
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="px-1.5 py-0.5 text-xs font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 rounded font-mono">http</span>
+                    <span className="text-gray-500 dark:text-neutral-400 font-normal text-xs">request to send</span>
+                  </span>
                 ) : (
                   'Command'
                 )}
@@ -116,6 +121,57 @@ const PendingCommandModal = ({ pendingCommand, onClose, onApprove, onReject }) =
                 <pre className="bg-gray-900 dark:bg-black text-emerald-300 p-4 rounded-lg font-mono text-sm overflow-auto max-h-64 whitespace-pre-wrap">
                   {pendingCommand.command}
                 </pre>
+              ) : pendingCommand.command_type === 'http' ? (
+                (() => {
+                  try {
+                    const req = JSON.parse(pendingCommand.command);
+                    return (
+                      <div className="bg-gray-900 dark:bg-black rounded-lg overflow-hidden">
+                        <div className="px-4 py-2 border-b border-neutral-700 font-mono text-sm">
+                          <span className="text-blue-400 font-semibold">{req.method || 'GET'}</span>
+                          {' '}
+                          <span className="text-neutral-200 break-all">{req.url}</span>
+                        </div>
+                        {req.headers && Object.keys(req.headers).length > 0 && (
+                          <div className="px-4 py-2 border-b border-neutral-700">
+                            <div className="text-xs text-neutral-500 mb-1 uppercase">Headers</div>
+                            <pre className="text-neutral-300 text-xs font-mono whitespace-pre-wrap">{JSON.stringify(req.headers, null, 2)}</pre>
+                          </div>
+                        )}
+                        {req.json_body && (
+                          <div className="px-4 py-2 border-b border-neutral-700">
+                            <div className="text-xs text-neutral-500 mb-1 uppercase">JSON Body</div>
+                            <pre className="text-emerald-300 text-xs font-mono whitespace-pre-wrap">{JSON.stringify(req.json_body, null, 2)}</pre>
+                          </div>
+                        )}
+                        {req.data && (
+                          <div className="px-4 py-2 border-b border-neutral-700">
+                            <div className="text-xs text-neutral-500 mb-1 uppercase">Data</div>
+                            <pre className="text-neutral-300 text-xs font-mono whitespace-pre-wrap">{typeof req.data === 'string' ? req.data : JSON.stringify(req.data, null, 2)}</pre>
+                          </div>
+                        )}
+                        {req.cookies && Object.keys(req.cookies).length > 0 && (
+                          <div className="px-4 py-2">
+                            <div className="text-xs text-neutral-500 mb-1 uppercase">Cookies</div>
+                            <pre className="text-neutral-300 text-xs font-mono whitespace-pre-wrap">{JSON.stringify(req.cookies, null, 2)}</pre>
+                          </div>
+                        )}
+                        {req.proxy && (
+                          <div className="px-4 py-2">
+                            <div className="text-xs text-neutral-500 mb-1 uppercase">Proxy</div>
+                            <code className="text-yellow-300 text-xs font-mono">{req.proxy}</code>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  } catch {
+                    return (
+                      <div className="bg-gray-900 dark:bg-black text-blue-300 p-4 rounded-lg font-mono text-sm overflow-x-auto">
+                        {pendingCommand.command}
+                      </div>
+                    );
+                  }
+                })()
               ) : (
                 <div className="bg-gray-900 dark:bg-black text-gray-100 dark:text-neutral-200 p-4 rounded-lg font-mono text-sm overflow-x-auto">
                   {pendingCommand.command}

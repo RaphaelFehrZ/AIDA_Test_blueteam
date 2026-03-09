@@ -469,6 +469,13 @@ const Commands = () => {
                                 {(cmd.source_code?.split('\n').find(l => l.trim()) || 'python script').slice(0, 50)}…
                               </code>
                             </span>
+                          ) : cmd.command_type === 'http' ? (
+                            <span className="inline-flex items-center gap-1.5">
+                              <span className="px-1.5 py-0.5 text-xs font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 rounded font-mono">http</span>
+                              <code className="text-xs font-mono text-neutral-500 dark:text-neutral-400">
+                                {cmd.command?.length > 60 ? cmd.command.substring(0, 60) + '...' : cmd.command}
+                              </code>
+                            </span>
                           ) : (
                             <code className="text-xs font-mono text-neutral-700 dark:text-neutral-300">
                               {cmd.command.length > 60 ? cmd.command.substring(0, 60) + '...' : cmd.command}
@@ -489,10 +496,15 @@ const Commands = () => {
                                   {cmd.command_type === 'python' && (
                                     <span className="px-1.5 py-0.5 bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400 rounded font-mono">python</span>
                                   )}
-                                  {cmd.command_type !== 'python' && 'Command'}
+                                  {cmd.command_type === 'http' && (
+                                    <span className="px-1.5 py-0.5 bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 rounded font-mono">http</span>
+                                  )}
+                                  {cmd.command_type !== 'python' && cmd.command_type !== 'http' && 'Command'}
                                 </span>
                                 {cmd.command_type === 'python' ? (
                                   <pre className="block mt-1 p-2 bg-neutral-900 text-emerald-300 border border-neutral-700 rounded text-xs font-mono overflow-auto max-h-48 whitespace-pre-wrap">{cmd.source_code}</pre>
+                                ) : cmd.command_type === 'http' ? (
+                                  <pre className="block mt-1 p-2 bg-neutral-900 text-blue-300 border border-neutral-700 rounded text-xs font-mono overflow-auto max-h-48 whitespace-pre-wrap">{cmd.source_code}</pre>
                                 ) : (
                                   <code className="block mt-1 p-2 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 rounded text-xs font-mono">{cmd.command}</code>
                                 )}

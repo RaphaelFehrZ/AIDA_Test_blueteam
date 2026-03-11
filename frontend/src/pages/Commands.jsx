@@ -85,14 +85,6 @@ const Commands = () => {
       }),
       subscribe('command_rejected', () => loadPendingCommands()),
       subscribe('command_timeout', () => loadPendingCommands()),
-      subscribe('command_completed', () => {
-        loadInitialCommands();
-        loadStats();
-      }),
-      subscribe('command_failed', () => {
-        loadInitialCommands();
-        loadStats();
-      }),
     ];
     return () => unsubscribes.forEach(unsub => unsub && unsub());
   }, [subscribe]);

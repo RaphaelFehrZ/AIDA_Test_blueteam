@@ -276,6 +276,7 @@ async def list_all_commands(
     limit: int = 50,
     status: Optional[str] = None,
     search: Optional[str] = None,
+    command_type: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
     """Get all commands across all assessments with pagination and filtering"""
@@ -286,12 +287,21 @@ async def list_all_commands(
         CommandHistory.assessment_id == Assessment.id
     )
 
-    # Filter by status
+    # Filter by status — frontend sends 'success' (passed) or 'failed'
     if status and status != "all":
-        if status == "completed":
+        if status in ("completed", "success"):
             query = query.filter(CommandHistory.returncode == 0)
         elif status == "failed":
             query = query.filter(CommandHistory.returncode != 0)
+
+    # Filter by command type — 'shell' includes null values (default type)
+    if command_type and command_type != "all":
+        if command_type == "shell":
+            query = query.filter(
+                or_(CommandHistory.command_type == "shell", CommandHistory.command_type == None)
+            )
+        else:
+            query = query.filter(CommandHistory.command_type == command_type)
 
     # Search filter across command, assessment name, and phase
     if search:

@@ -21,6 +21,7 @@ const Commands = () => {
   const [total, setTotal] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [typeFilter, setTypeFilter] = useState('all');
   const [expandedCommand, setExpandedCommand] = useState(null);
   const [searchDebounceTimer, setSearchDebounceTimer] = useState(null);
 
@@ -55,10 +56,10 @@ const Commands = () => {
   const { subscribe } = useWebSocketContext();
 
   // Keep filters in a ref so WebSocket handlers always see the latest values
-  const filterRef = useRef({ statusFilter, searchQuery });
+  const filterRef = useRef({ statusFilter, searchQuery, typeFilter });
   useEffect(() => {
-    filterRef.current = { statusFilter, searchQuery };
-  }, [statusFilter, searchQuery]);
+    filterRef.current = { statusFilter, searchQuery, typeFilter };
+  }, [statusFilter, searchQuery, typeFilter]);
 
   // Load initial data
   useEffect(() => {
@@ -85,12 +86,14 @@ const Commands = () => {
     const prependCommand = (data, isSuccess) => {
       const newCmd = data?.command;
       if (!newCmd) return;
-      const { statusFilter: sf, searchQuery: sq } = filterRef.current;
+      const { statusFilter: sf, searchQuery: sq, typeFilter: tf } = filterRef.current;
       const statusMatch = sf === 'all' || (isSuccess ? sf === 'passed' : sf === 'failed');
       const searchMatch = !sq ||
         newCmd.command?.toLowerCase().includes(sq.toLowerCase()) ||
         newCmd.assessment_name?.toLowerCase().includes(sq.toLowerCase());
-      if (statusMatch && searchMatch) {
+      const cmdType = newCmd.command_type || 'shell';
+      const typeMatch = tf === 'all' || cmdType === tf;
+      if (statusMatch && searchMatch && typeMatch) {
         setCommands(prev => [newCmd, ...prev]);
         setTotal(prev => prev + 1);
       }
@@ -172,7 +175,8 @@ const Commands = () => {
       setLoading(true);
       const skip = commands.length;
       const status = statusFilter === 'passed' ? 'success' : statusFilter === 'failed' ? 'failed' : null;
-      const data = await commandService.getAllCommands({ skip, limit: 50, status, search: searchQuery.trim() || null });
+      const command_type = typeFilter !== 'all' ? typeFilter : null;
+      const data = await commandService.getAllCommands({ skip, limit: 50, status, search: searchQuery.trim() || null, command_type });
       setCommands((prev) => [...prev, ...data.commands]);
       setTotal(data.total);
       setHasMore(data.has_more);
@@ -181,7 +185,7 @@ const Commands = () => {
     } finally {
       setLoading(false);
     }
-  }, [commands.length, statusFilter, searchQuery, hasMore, loading]);
+  }, [commands.length, statusFilter, typeFilter, searchQuery, hasMore, loading]);
 
   const loadInitialCommands = async () => {
     try {
@@ -197,11 +201,17 @@ const Commands = () => {
     }
   };
 
-  const reloadWithFilters = useCallback(async () => {
+  // Stable reload — always reads fresh values from filterRef, accepts overrides for
+  // values that changed THIS render (state not yet committed when called synchronously)
+  const reloadWithFilters = useCallback(async ({ sf, tf, sq } = {}) => {
+    const resolvedSf = sf ?? filterRef.current.statusFilter;
+    const resolvedTf = tf ?? filterRef.current.typeFilter;
+    const resolvedSq = sq ?? filterRef.current.searchQuery;
     try {
       setLoading(true);
-      const status = statusFilter === 'passed' ? 'success' : statusFilter === 'failed' ? 'failed' : null;
-      const data = await commandService.getAllCommands({ skip: 0, limit: 50, status, search: searchQuery.trim() || null });
+      const status = resolvedSf === 'passed' ? 'success' : resolvedSf === 'failed' ? 'failed' : null;
+      const command_type = resolvedTf !== 'all' ? resolvedTf : null;
+      const data = await commandService.getAllCommands({ skip: 0, limit: 50, status, search: resolvedSq.trim() || null, command_type });
       setCommands(data.commands);
       setTotal(data.total);
       setHasMore(data.has_more);
@@ -211,18 +221,25 @@ const Commands = () => {
     } finally {
       setLoading(false);
     }
-  }, [statusFilter, searchQuery]);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => {
-    if (!initialLoading && mainTab === 'all') {
-      reloadWithFilters();
-    }
-  }, [statusFilter]);
+  const handleStatusFilterChange = (newStatus) => {
+    setStatusFilter(newStatus);
+    filterRef.current = { ...filterRef.current, statusFilter: newStatus };
+    if (!initialLoading) reloadWithFilters({ sf: newStatus });
+  };
+
+  const handleTypeFilterChange = (newType) => {
+    setTypeFilter(newType);
+    filterRef.current = { ...filterRef.current, typeFilter: newType };
+    if (!initialLoading) reloadWithFilters({ tf: newType });
+  };
 
   const handleSearchChange = (value) => {
     setSearchQuery(value);
+    filterRef.current = { ...filterRef.current, searchQuery: value };
     if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
-    const timer = setTimeout(() => { if (!initialLoading) reloadWithFilters(); }, 500);
+    const timer = setTimeout(() => { if (!initialLoading) reloadWithFilters({ sq: value }); }, 500);
     setSearchDebounceTimer(timer);
   };
 
@@ -433,7 +450,7 @@ const Commands = () => {
       {mainTab === 'all' && (
         <div className="space-y-4">
           {/* Search & Filter */}
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3 flex-wrap">
             <div className="relative flex-1 max-w-sm">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-400" />
               <input
@@ -444,20 +461,55 @@ const Commands = () => {
                 className="w-full pl-9 pr-4 py-2 text-sm border border-neutral-200 dark:border-neutral-700 rounded-lg bg-white dark:bg-neutral-800 focus:outline-none focus:ring-2 focus:ring-primary-500"
               />
             </div>
+            {/* Status filter */}
             <div className="flex items-center text-xs border border-neutral-200 dark:border-neutral-700 rounded-lg overflow-hidden">
-              {['all', 'passed', 'failed'].map((status) => (
+              {[
+                { value: 'all',    label: 'All',    dot: null },
+                { value: 'passed', label: 'Passed', dot: 'bg-green-500' },
+                { value: 'failed', label: 'Failed', dot: 'bg-red-500' },
+              ].map(({ value, label, dot }) => (
                 <button
-                  key={status}
-                  onClick={() => setStatusFilter(status)}
-                  className={`px-3 py-2 transition-colors ${statusFilter === status
-                    ? 'bg-neutral-900 dark:bg-neutral-100 text-white dark:text-neutral-900'
-                    : 'text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800'
-                    }`}
+                  key={value}
+                  onClick={() => handleStatusFilterChange(value)}
+                  className={`px-3 py-2 transition-colors flex items-center gap-1.5 ${
+                    statusFilter === value
+                      ? 'bg-neutral-900 dark:bg-neutral-100 text-white dark:text-neutral-900'
+                      : 'text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800'
+                  }`}
                 >
-                  {status.charAt(0).toUpperCase() + status.slice(1)}
+                  {dot && <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${dot} ${statusFilter === value ? 'opacity-70' : ''}`} />}
+                  {label}
                 </button>
               ))}
             </div>
+            {/* Type filter */}
+            <div className="flex items-center text-xs border border-neutral-200 dark:border-neutral-700 rounded-lg overflow-hidden">
+              {[
+                { value: 'all',    label: 'All',    dot: null },
+                { value: 'shell',  label: 'Shell',  dot: 'bg-neutral-400' },
+                { value: 'python', label: 'Python', dot: 'bg-emerald-500' },
+                { value: 'http',   label: 'HTTP',   dot: 'bg-blue-500' },
+              ].map(({ value, label, dot }) => (
+                <button
+                  key={value}
+                  onClick={() => handleTypeFilterChange(value)}
+                  className={`px-3 py-2 transition-colors flex items-center gap-1.5 ${
+                    typeFilter === value
+                      ? 'bg-neutral-900 dark:bg-neutral-100 text-white dark:text-neutral-900'
+                      : 'text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800'
+                  }`}
+                >
+                  {dot && <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${dot} ${typeFilter === value ? 'opacity-70' : ''}`} />}
+                  {label}
+                </button>
+              ))}
+            </div>
+            {/* Filtered count */}
+            {(statusFilter !== 'all' || typeFilter !== 'all' || searchQuery) && (
+              <span className="text-xs text-neutral-400 dark:text-neutral-500 ml-1">
+                {total.toLocaleString()} result{total !== 1 ? 's' : ''}
+              </span>
+            )}
           </div>
 
           {/* Commands Table */}
@@ -465,7 +517,13 @@ const Commands = () => {
             {commands.length === 0 ? (
               <div className="py-12 text-center text-neutral-500">
                 <Terminal className="w-8 h-8 mx-auto mb-2 opacity-30" />
-                <p className="text-sm">{searchQuery ? 'No matching commands' : 'No commands executed yet'}</p>
+                <p className="text-sm">
+                {searchQuery
+                  ? 'No matching commands'
+                  : typeFilter !== 'all'
+                  ? `No ${typeFilter} commands found`
+                  : 'No commands executed yet'}
+              </p>
               </div>
             ) : (
               <table className="table-notion">

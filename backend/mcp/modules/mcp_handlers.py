@@ -339,6 +339,38 @@ async def _handle_load_assessment(arguments: dict, mcp_service) -> List[TextCont
         # Continue without commands
         pass
 
+    # Add credentials (placeholders + metadata, no raw secrets)
+    try:
+        creds_response = await mcp_service.http_client.get(
+            f"{mcp_service.backend_url}/assessments/{assessment['id']}/credentials"
+        )
+        creds_response.raise_for_status()
+        creds_data = creds_response.json()
+        credentials = creds_data.get("credentials", [])
+
+        if credentials:
+            response += f"\n## Credentials ({len(credentials)} available)\n"
+            response += "Use `{{PLACEHOLDER}}` syntax in commands/HTTP requests for automatic substitution.\n\n"
+            for cred in credentials:
+                placeholder = cred.get("placeholder", "")
+                ctype = cred.get("credential_type", "")
+                name = cred.get("name", "")
+                service = cred.get("service", "")
+                target = cred.get("target", "")
+                notes = cred.get("notes", "")
+                response += f"- **{name}** ({ctype}) → `{{{{{placeholder}}}}}`"
+                if service:
+                    response += f" | Service: {service}"
+                if target:
+                    response += f" | Target: {target}"
+                if notes:
+                    response += f" | Notes: {notes}"
+                response += "\n"
+        else:
+            response += "\n## Credentials\nNo credentials configured yet. Use `credentials_add` to add tokens, cookies, etc.\n"
+    except Exception:
+        pass
+
     response += "\nReady to begin assessment work!"
 
     return [TextContent(type="text", text=response)]

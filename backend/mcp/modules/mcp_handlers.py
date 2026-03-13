@@ -214,103 +214,67 @@ async def _handle_load_assessment(arguments: dict, mcp_service) -> List[TextCont
         except Exception as e:
             log.warning(f"Failed to load stealth config: {e}")
 
-    # Add sections information
+    # Add sections information (compact)
     sections = full_data.get('sections', [])
     if sections:
+        phase_names = {
+            '1': 'Reconnaissance', '2': 'Mapping & Enumeration',
+            '3': 'Vulnerability Assessment', '4': 'Exploitation',
+            '5': 'Post-Exploitation & Reporting'
+        }
         response += "## Assessment Phases\n"
         for section in sections:
             phase_num = section.get('section_type', '').replace('phase_', '')
             if phase_num.isdigit():
-                phase_names = {
-                    '1': 'Reconnaissance',
-                    '2': 'Mapping & Enumeration',
-                    '3': 'Vulnerability Assessment',
-                    '4': 'Exploitation',
-                    '5': 'Post-Exploitation & Reporting'
-                }
                 phase_name = phase_names.get(phase_num, f'Phase {phase_num}')
                 content = section.get('content', '')
                 if content:
-                    response += f"**Phase {phase_num} - {phase_name}:**\n{content}\n\n"
+                    # Truncate long phase content to save tokens
+                    preview = content[:300]
+                    if len(content) > 300:
+                        preview += f"... ({len(content)} chars total)"
+                    response += f"**Phase {phase_num} - {phase_name}:**\n{preview}\n\n"
                 else:
-                    response += f"**Phase {phase_num} - {phase_name}:** No content yet\n"
+                    response += f"**Phase {phase_num} - {phase_name}:** Empty\n"
 
-    # Add all cards with full details
+    # Add cards summary (compact - use list_cards for full details)
     cards = full_data.get('cards', [])
     if cards:
         # Filter out false positives (hidden from AI)
         cards = [c for c in cards if c.get('status') != 'false_positive']
-        
+
         # Separate by type
         findings = [c for c in cards if c.get('card_type') == 'finding']
         observations = [c for c in cards if c.get('card_type') == 'observation']
         infos = [c for c in cards if c.get('card_type') == 'info']
 
-        # Display FINDINGS with full details
+        # Display FINDINGS as compact table
         if findings:
-            response += f"\n## Findings ({len(findings)} total)\n"
-            # Group by severity
+            response += f"\n## Findings ({len(findings)})\n"
+            response += "| ID | Severity | Title | Target | Status |\n"
+            response += "|---|---|---|---|---|\n"
             for severity in ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO']:
-                severity_findings = [f for f in findings if f.get('severity') == severity]
-                if severity_findings:
-                    response += f"\n### {severity} ({len(severity_findings)})\n"
-                    for finding in severity_findings:
-                        response += f"\n**[ID: {finding['id']}] {finding.get('title', 'Untitled')}**\n"
-                        if finding.get('target_service'):
-                            response += f"- **Target:** {finding['target_service']}\n"
-                        if finding.get('status'):
-                            response += f"- **Status:** {finding['status']}\n"
-                        if finding.get('cvss_score') is not None:
-                            response += f"- **CVSS Score:** {finding['cvss_score']}\n"
-                        if finding.get('cvss_vector'):
-                            response += f"- **CVSS Vector:** `{finding['cvss_vector']}`\n"
-                        if finding.get('section_number'):
-                            response += f"- **Section:** {finding['section_number']}\n"
-                        if finding.get('technical_analysis'):
-                            response += f"- **Technical Analysis:**\n{finding['technical_analysis']}\n"
-                        if finding.get('proof'):
-                            response += f"- **Proof:**\n{finding['proof']}\n"
-                        if finding.get('notes'):
-                            response += f"- **Notes:** {finding['notes']}\n"
-                        if finding.get('context'):
-                            response += f"- **Context:** {finding['context']}\n"
-                        response += f"- **Created:** {finding.get('created_at', 'N/A')}\n"
+                for f in findings:
+                    if f.get('severity') == severity:
+                        response += f"| {f['id']} | {severity} | {f.get('title', 'Untitled')} | {f.get('target_service', '')} | {f.get('status', '')} |\n"
 
-        # Display OBSERVATIONS with full details
+        # Display OBSERVATIONS as compact list
         if observations:
-            response += f"\n## Observations ({len(observations)} total)\n"
+            response += f"\n## Observations ({len(observations)})\n"
             for obs in observations:
-                response += f"\n**[ID: {obs['id']}] {obs.get('title', 'Untitled')}**\n"
-                if obs.get('target_service'):
-                    response += f"- **Target:** {obs['target_service']}\n"
-                if obs.get('section_number'):
-                    response += f"- **Section:** {obs['section_number']}\n"
-                if obs.get('notes'):
-                    response += f"- **Notes:**\n{obs['notes']}\n"
-                if obs.get('context'):
-                    response += f"- **Context:** {obs['context']}\n"
-                if obs.get('technical_analysis'):
-                    response += f"- **Analysis:** {obs['technical_analysis']}\n"
-                response += f"- **Created:** {obs.get('created_at', 'N/A')}\n"
+                target = f" → {obs['target_service']}" if obs.get('target_service') else ""
+                response += f"- [ID:{obs['id']}] {obs.get('title', 'Untitled')}{target}\n"
 
-        # Display INFO CARDS with full details
+        # Display INFO CARDS as compact list
         if infos:
-            response += f"\n## Info Cards ({len(infos)} total)\n"
+            response += f"\n## Info Cards ({len(infos)})\n"
             for info in infos:
-                response += f"\n**[ID: {info['id']}] {info.get('title', 'Untitled')}**\n"
-                if info.get('target_service'):
-                    response += f"- **Target:** {info['target_service']}\n"
-                if info.get('section_number'):
-                    response += f"- **Section:** {info['section_number']}\n"
-                if info.get('context'):
-                    response += f"- **Context:**\n{info['context']}\n"
-                if info.get('notes'):
-                    response += f"- **Notes:** {info['notes']}\n"
-                if info.get('technical_analysis'):
-                    response += f"- **Analysis:** {info['technical_analysis']}\n"
-                response += f"- **Created:** {info.get('created_at', 'N/A')}\n"
+                target = f" → {info['target_service']}" if info.get('target_service') else ""
+                response += f"- [ID:{info['id']}] {info.get('title', 'Untitled')}{target}\n"
 
-    # Add reconnaissance data
+        response += "\n*Use `list_cards` with card type filter for full details.*\n"
+
+    # Add reconnaissance data (compact summary)
     recon_data = full_data.get('recon_data', [])
     if recon_data:
         response += "\n## Reconnaissance Data\n"
@@ -360,15 +324,10 @@ async def _handle_load_assessment(arguments: dict, mcp_service) -> List[TextCont
         commands = commands_response.json()
 
         if commands:
-            response += f"\n## Recent Commands ({len(commands)} most recent)\n"
+            response += f"\n## Recent Commands ({len(commands)})\n"
             for cmd in commands:
-                response += f"\n`{cmd.get('command', 'N/A')}`\n"
-                # Show stdout if available
-                if cmd.get('stdout'):
-                    response += f"{cmd['stdout']}\n"
-                # Show stderr if available
-                if cmd.get('stderr'):
-                    response += f"Error: {cmd['stderr']}\n"
+                status = "ERR" if cmd.get('stderr') else "OK"
+                response += f"- `{cmd.get('command', 'N/A')}` [{status}]\n"
     except Exception as e:
         # Continue without commands
         pass

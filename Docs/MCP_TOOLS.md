@@ -33,8 +33,12 @@ AIDA exposes tools through the Model Context Protocol (MCP). These tools give AI
 | | | `add_recon_data(entries=[{...}, {...}])` | Batch import recon data |
 | | `list_recon` | `list_recon()` | List all recon data |
 | | | `list_recon(data_type="subdomain", limit=100)` | Filter recon by type |
-| **Execution** | `execute` | `execute(command="nmap -sV 10.0.0.1")` | Run command in Exegol |
+| **Execution** | `execute` | `execute(command="nmap -sV 10.0.0.1")` | Run shell command in Exegol |
 | | | `execute(command="...", phase="recon")` | Run with phase context |
+| | `python_exec` | `python_exec(code="import socket; ...")` | Execute Python code in Exegol |
+| | | `python_exec(code="...", phase="recon")` | Run Python with phase context |
+| | `http_request` | `http_request(method="GET", url="https://...")` | Make HTTP request from Exegol |
+| | | `http_request(method="POST", url="...", body={...}, headers={...})` | POST with body and headers |
 | **Pentesting** | `scan` | `scan(type="nmap_quick", target="10.0.0.1")` | Quick nmap scan |
 | | | `scan(type="nmap_full", target="10.0.0.1", ports="1-65535")` | Full port scan |
 | | | `scan(type="gobuster", target="https://...", wordlist="medium")` | Directory enumeration |
@@ -58,7 +62,7 @@ AIDA exposes tools through the Model Context Protocol (MCP). These tools give AI
 | [Assessment](#assessment-management) | 2 | Load and update assessments |
 | [Cards](#cards-management) | 4 | Findings, observations, info |
 | [Recon](#reconnaissance) | 2 | Track discovered assets |
-| [Execution](#command-execution) | 1 | Run commands in Exegol |
+| [Execution](#command-execution) | 3 | Run commands, Python code, HTTP requests in Exegol |
 | [Pentesting](#pentesting-tools) | 5 | Specialized security tools |
 | [Credentials](#credentials-management) | 2 | Store and retrieve creds |
 
@@ -241,9 +245,11 @@ list_recon(data_type="subdomain", limit=100)
 
 ## Command Execution
 
+Three tools allow code execution inside the Exegol container. Each has its own independently configurable output max length (Settings → Command Settings → Output Max Length).
+
 ### `execute`
 
-Execute any command in the Exegol container.
+Execute any shell command in the Exegol container.
 
 **Examples:**
 
@@ -268,8 +274,107 @@ execute(command="sqlmap -u 'https://target.com/api?id=1' --dbs --batch")
 
 **Notes:**
 - Commands may require approval based on settings
-- Output is truncated to configured max length
+- Output is truncated to the `execute` output max length setting
 - Credential placeholders (`{{TOKEN}}`) are auto-substituted
+
+---
+
+### `python_exec`
+
+Execute Python code directly inside the Exegol container via stdin, without shell escaping issues.
+
+**Examples:**
+
+```python
+# Network recon
+python_exec(code="""
+import socket
+ip = socket.gethostbyname('acme.com')
+print(f'Resolved: {ip}')
+""")
+
+# Use installed libraries (requests, scapy, impacket, etc.)
+python_exec(
+    code="""
+import requests
+r = requests.get('https://target.com/api/users', verify=False)
+print(r.status_code, r.text[:500])
+""",
+    phase="recon"
+)
+```
+
+**Returns:**
+- Python stdout/stderr output
+- Exit code
+
+**Notes:**
+- Code is passed via stdin — no shell escaping needed
+- All tools installed in Exegol are available (requests, scapy, impacket, etc.)
+- Output is truncated to the `python_exec` output max length setting
+- Credential placeholders (`{{TOKEN}}`) are auto-substituted in the code
+
+---
+
+### `http_request`
+
+Make HTTP requests directly from the Exegol container. Useful for testing endpoints that require specific network routing, proxies, or certificates.
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `method` | string | Yes | HTTP method: `GET`, `POST`, `PUT`, `DELETE`, `PATCH`, `HEAD`, `OPTIONS` |
+| `url` | string | Yes | Target URL |
+| `headers` | object | No | HTTP headers dict |
+| `body` | any | No | Request body (dict → JSON, string → raw) |
+| `timeout` | int | No | Request timeout in seconds (default: 30) |
+| `verify_ssl` | bool | No | Verify SSL certificates (default: true) |
+| `follow_redirects` | bool | No | Follow HTTP redirects (default: true) |
+| `proxy` | string | No | Proxy URL (e.g. `http://127.0.0.1:8080`) |
+| `phase` | string | No | Phase context for logging |
+
+**Examples:**
+
+```python
+# Simple GET
+http_request(method="GET", url="https://target.com/api/users")
+
+# POST with JSON body
+http_request(
+    method="POST",
+    url="https://target.com/api/login",
+    headers={"Content-Type": "application/json"},
+    body={"username": "admin", "password": "test"}
+)
+
+# With auth header and SSL bypass
+http_request(
+    method="GET",
+    url="https://internal.target.com/admin",
+    headers={"Authorization": "Bearer {{ADMIN_API_TOKEN}}"},
+    verify_ssl=False,
+    phase="exploitation"
+)
+
+# Through Burp proxy
+http_request(
+    method="GET",
+    url="https://target.com/api/secret",
+    proxy="http://127.0.0.1:8080",
+    verify_ssl=False
+)
+```
+
+**Returns:**
+- Status code and response headers
+- Response body (truncated to `http_request` output max length setting)
+- Response time
+
+**Notes:**
+- Requests are made from within the Exegol container (internal network access)
+- Credential placeholders (`{{TOKEN}}`) are auto-substituted in headers and body
+- Commands may require approval based on settings
 
 ---
 

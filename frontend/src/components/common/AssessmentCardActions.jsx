@@ -2,6 +2,7 @@ import { useState, useRef } from 'react';
 import { MoreVertical } from 'lucide-react';
 import ContextMenu from './ContextMenu';
 import DuplicateAssessmentModal from '../assessment/DuplicateAssessmentModal';
+import folderService from '../../services/folderService';
 
 const AssessmentCardActions = ({
   assessment,

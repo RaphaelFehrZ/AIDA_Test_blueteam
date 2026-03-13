@@ -21,6 +21,7 @@ from schemas.pending_command import (
     PendingCommandsListResponse
 )
 from services.container_service import ContainerService
+from schemas.command import HttpRequestRequest
 from websocket.manager import manager
 from websocket.events import create_event, EventType
 
@@ -352,14 +353,31 @@ async def approve_command(
             detail=f"Command is already {pending_cmd.status}"
         )
     
-    # Execute the command
+    # Execute the command — route based on command_type
     container_service = ContainerService()
-    exec_result = await container_service.execute_and_log_command(
-        assessment_id=pending_cmd.assessment_id,
-        command=pending_cmd.command,
-        phase=pending_cmd.phase,
-        db=db
-    )
+    if pending_cmd.command_type == "python":
+        exec_result = await container_service.execute_and_log_python(
+            assessment_id=pending_cmd.assessment_id,
+            code=pending_cmd.command,
+            phase=pending_cmd.phase,
+            db=db
+        )
+    elif pending_cmd.command_type == "http":
+        # pending_cmd.command stores the JSON-serialized HttpRequestRequest params
+        http_params_dict = json.loads(pending_cmd.command)
+        http_params = HttpRequestRequest(**http_params_dict)
+        exec_result = await container_service.execute_and_log_http_request(
+            assessment_id=pending_cmd.assessment_id,
+            params=http_params,
+            db=db
+        )
+    else:
+        exec_result = await container_service.execute_and_log_command(
+            assessment_id=pending_cmd.assessment_id,
+            command=pending_cmd.command,
+            phase=pending_cmd.phase,
+            db=db
+        )
     
     # Update pending command
     pending_cmd.status = "executed"
@@ -534,7 +552,8 @@ async def create_pending_command(
         phase=command_data.get("phase"),
         matched_keywords=command_data.get("matched_keywords", []),
         status="pending",
-        timeout_seconds=timeout_sec
+        timeout_seconds=timeout_sec,
+        command_type=command_data.get("command_type", "shell")  # 'shell' | 'python'
     )
     
     db.add(pending_cmd)

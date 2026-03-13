@@ -17,6 +17,7 @@ import assessmentService from '../services/assessmentService';
 import apiClient from '../services/api';
 import { commandService } from '../services/commandService';
 import toolStatsService from '../services/toolStatsService';
+import { useWebSocketContext } from '../contexts/WebSocketContext';
 
 // Utility for smooth Bezier curves
 const getControlPoint = (current, previous, next, reverse) => {
@@ -79,9 +80,60 @@ const Dashboard = () => {
   const [topTools, setTopTools] = useState([]);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
 
+  const { subscribe } = useWebSocketContext();
+
   useEffect(() => {
     loadDashboardData();
   }, []);
+
+  // Real-time updates via WebSocket
+  useEffect(() => {
+    const reloadCommands = async () => {
+      try {
+        let allCommandsList = [];
+        let skip = 0;
+        const limit = 500;
+        let hasMore = true;
+        while (hasMore) {
+          const data = await commandService.getAllCommands({ skip, limit });
+          allCommandsList = [...allCommandsList, ...data.commands];
+          hasMore = data.has_more;
+          skip += limit;
+        }
+        setAllCommands(allCommandsList);
+      } catch (error) {
+        // silently ignore
+      }
+    };
+
+    const reloadFindings = async () => {
+      try {
+        const { data: assessmentsData } = await apiClient.get('/assessments');
+        setAssessments(assessmentsData);
+        const findingsPromises = assessmentsData.map(a =>
+          apiClient.get(`/assessments/${a.id}/cards`)
+            .then(res => res.data.filter(card => card.card_type === 'finding'))
+            .catch(() => [])
+        );
+        const arrays = await Promise.all(findingsPromises);
+        setAllFindings(arrays.flat());
+      } catch (error) {
+        // silently ignore
+      }
+    };
+
+    const unsubscribes = [
+      subscribe('command_completed', reloadCommands),
+      subscribe('command_failed', reloadCommands),
+      subscribe('card_added', reloadFindings),
+      subscribe('card_updated', reloadFindings),
+      subscribe('card_deleted', reloadFindings),
+      subscribe('assessment_created', reloadFindings),
+      subscribe('assessment_updated', reloadFindings),
+      subscribe('assessment_deleted', reloadFindings),
+    ];
+    return () => unsubscribes.forEach(unsub => unsub && unsub());
+  }, [subscribe]);
 
   const loadDashboardData = async () => {
     try {

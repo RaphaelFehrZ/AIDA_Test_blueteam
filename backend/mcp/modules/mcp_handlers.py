@@ -300,17 +300,33 @@ async def _handle_load_assessment(arguments: dict, mcp_service) -> List[TextCont
     recon_data = full_data.get('recon_data', [])
     if recon_data:
         response += "\n## Reconnaissance Data\n"
-        endpoints = [r for r in recon_data if r.get('data_type') == 'endpoint']
-        technologies = [r for r in recon_data if r.get('data_type') == 'technology']
-        services = [r for r in recon_data if r.get('data_type') == 'service']
-        subdomains = [r for r in recon_data if r.get('data_type') == 'subdomain']
 
-        if endpoints:
-            response += f"**Endpoints ({len(endpoints)}):** {', '.join([e.get('name', '') for e in endpoints[:5]])}\n"
-        if technologies:
-            response += f"**Technologies ({len(technologies)}):** {', '.join([t.get('name', '') for t in technologies[:5]])}\n"
-        if subdomains:
-            response += f"**Subdomains ({len(subdomains)}):** {', '.join([s.get('name', '') for s in subdomains[:5]])}\n"
+        # Group all items by data_type (no truncation)
+        recon_by_type = {}
+        for r in recon_data:
+            dtype = r.get('data_type', 'other')
+            recon_by_type.setdefault(dtype, []).append(r)
+
+        # Display order: known types first, then anything else
+        ordered_types = ['endpoint', 'subdomain', 'service', 'technology', 'port', 'database', 'credential', 'vulnerability']
+        displayed = set()
+
+        for dtype in ordered_types:
+            items = recon_by_type.get(dtype)
+            if not items:
+                continue
+            displayed.add(dtype)
+            label = dtype.capitalize() + 's'
+            names = [i.get('name', '') for i in items]
+            response += f"**{label} ({len(names)}):** {', '.join(names)}\n"
+
+        # Any extra/custom types not in the predefined list
+        for dtype, items in recon_by_type.items():
+            if dtype in displayed:
+                continue
+            label = dtype.replace('_', ' ').capitalize() + 's'
+            names = [i.get('name', '') for i in items]
+            response += f"**{label} ({len(names)}):** {', '.join(names)}\n"
 
     # Add recent command history
     try:

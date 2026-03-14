@@ -144,8 +144,11 @@ class ContainerService:
                             container_name = container_data.get("Names", "unknown").lstrip('/')
                             image = container_data.get("Image", "")
 
-                            # Only include containers whose name starts with "exegol-"
-                            if container_name.lower().startswith("exegol-"):
+                            # Accept containers matching any configured prefix (aida-, exegol-, ...)
+                            allowed_prefixes = tuple(
+                                p.strip() for p in settings.CONTAINER_PREFIX_FILTER.split(",") if p.strip()
+                            )
+                            if container_name.lower().startswith(allowed_prefixes):
                                 containers.append({
                                     "name": container_name,
                                     "image": image,

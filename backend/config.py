@@ -31,9 +31,12 @@ class Settings(BaseSettings):
     # For production, set BACKEND_CORS_ORIGINS in .env to specific origins
     BACKEND_CORS_ORIGINS: str = "*"
 
-    # Container Configuration (Exegol pentesting container)
+    # Container Configuration
     CONTAINER_WORKSPACE_BASE: str = "/workspace"
-    DEFAULT_CONTAINER_NAME: str = "exegol-aida"
+    DEFAULT_CONTAINER_NAME: str = "aida-pentest"
+    # Comma-separated list of accepted container name prefixes.
+    # Both aida- (new) and exegol- (legacy) are accepted for backward compat.
+    CONTAINER_PREFIX_FILTER: str = "aida-,exegol-"
     COMMAND_TIMEOUT: int = 300  # seconds (5 minutes default)
 
     # Logging

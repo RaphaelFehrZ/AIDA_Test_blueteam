@@ -285,7 +285,7 @@ def get_tool_definitions() -> List[Tool]:
 
         Tool(
             name="execute",
-            description="Execute a command in Exegol",
+            description="Execute a command in the active pentesting container",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -305,7 +305,7 @@ def get_tool_definitions() -> List[Tool]:
         Tool(
             name="python_exec",
             description=(
-                "Execute Python code directly in the Exegol container without escaping issues. "
+                "Execute Python code directly in the active pentesting container"
                 "Pass multi-line Python as a plain string — no heredoc, no backslash hell, no quoting errors. "
                 "Use this instead of execute() for any Python script. "
                 "Supports {{PLACEHOLDER}} credential substitution in the code."
@@ -329,7 +329,7 @@ def get_tool_definitions() -> List[Tool]:
         Tool(
             name="http_request",
             description=(
-                "Make HTTP requests from inside Exegol — no curl escaping hell. "
+                "Make HTTP requests from inside the active pentesting container — no curl escaping hell. "
                 "Pass structured params (method, headers, json body, cookies, auth, proxy). "
                 "Execution stays inside the container (network isolation, VPN access). "
                 "Use proxy='http://127.0.0.1:8080' to route through Burp Suite. "

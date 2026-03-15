@@ -94,7 +94,6 @@ Or switch to Exegol (Option 2) if you want 400+ tools pre-installed out of the b
 If you selected Exegol (or want to switch to it), refer to the official documentation for installation and setup: https://docs.exegol.com
 
 Then in AIDA Settings, make sure your default container is set to match your Exegol container name.
-
 > **Switching containers:** You can change your container preference anytime in **Settings → Container**. This affects new assessments; existing ones keep their assigned container.
 
 ---

@@ -1341,7 +1341,7 @@ async def _handle_scan(arguments: dict, mcp_service) -> List[TextContent]:
     threads = arguments.get("threads", 10)
     extra_flags = arguments.get("extra_flags", "")
     
-    # Wordlist mapping (corrected paths for Exegol)
+    # Wordlist mapping
     WORDLISTS = {
         "common": "/usr/share/dirb/wordlists/common.txt",
         "medium": "/usr/share/dirbuster/directory-list-2.3-medium.txt",

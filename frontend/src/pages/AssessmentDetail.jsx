@@ -793,6 +793,7 @@ const AssessmentDetail = () => {
                 cards={filteredCards}
                 assessmentId={id}
                 onUpdate={loadAssessment}
+                hideAddButton
                 externalTrigger={addCardTrigger}
               />
             </div>

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { ChevronDown, ChevronRight, Shield, Eye, EyeOff, Info, AlertTriangle, Edit2, Trash2, Plus } from '../icons';
-import { getSeverityBadgeClass } from '../../utils/severity';
+import { getSeverityBadgeClass, getSeverityBarClass, getSeverityTextClass } from '../../utils/severity';
 import UnifiedModal from '../common/UnifiedModal';
 import CvssCalculator from './CvssCalculator';
 import apiClient from '../../services/api';
@@ -210,7 +210,16 @@ const CardsTable = ({ cards, assessmentId, onUpdate, hideAddButton = false, exte
           const isFalsePositive = card.status === 'false_positive';
 
           return (
-            <div key={card.id} id={`card-${card.id}`} className={`border border-neutral-200 dark:border-neutral-700 rounded-lg bg-white dark:bg-neutral-800 hover:border-neutral-300 dark:hover:border-neutral-600 transition-colors ${isFalsePositive ? 'opacity-50' : ''}`}>
+            <div key={card.id} id={`card-${card.id}`} className={`flex border border-neutral-200 dark:border-neutral-700 rounded-lg overflow-hidden bg-white dark:bg-neutral-800 hover:border-neutral-300 dark:hover:border-neutral-600 transition-colors ${isFalsePositive ? 'opacity-50' : ''}`}>
+              {/* Left color strip */}
+              <div className={`w-1 flex-shrink-0 ${
+                cardType === 'finding'     ? getSeverityBarClass(severity) :
+                cardType === 'observation' ? 'bg-blue-400' :
+                cardType === 'info'        ? 'bg-green-400' :
+                                            'bg-neutral-300 dark:bg-neutral-600'
+              }`} />
+              {/* Content */}
+              <div className="flex-1 min-w-0">
               {/* Card Row */}
               <div className="w-full px-4 py-3">
                 <div className="flex items-center justify-between">
@@ -232,14 +241,17 @@ const CardsTable = ({ cards, assessmentId, onUpdate, hideAddButton = false, exte
                       {getCardIcon(cardType, severity)}
                     </div>
 
-                    {/* Severity Badge + CVSS Score */}
+                    {/* CVSS score or severity fallback */}
                     {cardType === 'finding' && (
-                      <span className={`px-2 py-1 text-xs font-medium rounded border ${getSeverityBadgeClass(severity)}`}>
-                        {severity}
-                        {card.cvss_score != null && (
-                          <span className="ml-1 font-mono opacity-80">{card.cvss_score.toFixed(1)}</span>
-                        )}
-                      </span>
+                      card.cvss_score != null ? (
+                        <span className={`text-xs font-mono font-bold tabular-nums ${getSeverityTextClass(severity)}`}>
+                          {card.cvss_score.toFixed(1)}
+                        </span>
+                      ) : (
+                        <span className={`px-2 py-0.5 text-xs font-medium rounded border ${getSeverityBadgeClass(severity)}`}>
+                          {severity}
+                        </span>
+                      )
                     )}
 
                     {/* Card Type */}
@@ -384,6 +396,7 @@ const CardsTable = ({ cards, assessmentId, onUpdate, hideAddButton = false, exte
                   </div>
                 </div>
               )}
+              </div>{/* end content wrapper */}
             </div>
           );
         })}

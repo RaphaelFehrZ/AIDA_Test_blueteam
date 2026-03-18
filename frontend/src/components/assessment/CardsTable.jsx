@@ -317,17 +317,17 @@ const CardsTable = ({ cards, assessmentId, onUpdate, hideAddButton = false, exte
                       <div>
                         <h4 className="text-sm font-semibold text-neutral-700 dark:text-neutral-300 mb-2">Technical Analysis</h4>
                         <div className="text-sm text-neutral-600 dark:text-neutral-300 bg-white dark:bg-neutral-800 p-3 rounded border border-neutral-200 dark:border-neutral-700">
-                          <div className="whitespace-pre-wrap">{card.technical_analysis}</div>
+                          <div className="whitespace-pre-wrap break-words">{card.technical_analysis}</div>
                         </div>
                       </div>
                     )}
 
-                    {/* Proof */}
+                    {/* Proof — scrollable code block */}
                     {card.proof && (
                       <div>
                         <h4 className="text-sm font-semibold text-neutral-700 dark:text-neutral-300 mb-2">Proof</h4>
-                        <div className="text-sm text-neutral-600 dark:text-neutral-300 bg-white dark:bg-neutral-800 p-3 rounded border border-neutral-200 dark:border-neutral-700">
-                          <pre className="whitespace-pre-wrap font-mono text-xs">{card.proof}</pre>
+                        <div className="overflow-x-auto bg-white dark:bg-neutral-800 rounded border border-neutral-200 dark:border-neutral-700">
+                          <pre className="p-3 text-xs font-mono text-neutral-600 dark:text-neutral-300 whitespace-pre">{card.proof}</pre>
                         </div>
                       </div>
                     )}
@@ -337,7 +337,7 @@ const CardsTable = ({ cards, assessmentId, onUpdate, hideAddButton = false, exte
                       <div>
                         <h4 className="text-sm font-semibold text-neutral-700 dark:text-neutral-300 mb-2">Notes</h4>
                         <div className="text-sm text-neutral-600 dark:text-neutral-300 bg-white dark:bg-neutral-800 p-3 rounded border border-neutral-200 dark:border-neutral-700">
-                          <div className="whitespace-pre-wrap">{card.notes}</div>
+                          <div className="whitespace-pre-wrap break-words">{card.notes}</div>
                         </div>
                       </div>
                     )}
@@ -347,7 +347,7 @@ const CardsTable = ({ cards, assessmentId, onUpdate, hideAddButton = false, exte
                       <div>
                         <h4 className="text-sm font-semibold text-neutral-700 dark:text-neutral-300 mb-2">Context</h4>
                         <div className="text-sm text-neutral-600 dark:text-neutral-300 bg-white dark:bg-neutral-800 p-3 rounded border border-neutral-200 dark:border-neutral-700">
-                          <div className="whitespace-pre-wrap">{card.context}</div>
+                          <div className="whitespace-pre-wrap break-words">{card.context}</div>
                         </div>
                       </div>
                     )}

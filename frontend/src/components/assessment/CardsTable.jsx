@@ -1,11 +1,11 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { ChevronDown, ChevronRight, Shield, Eye, EyeOff, Info, AlertTriangle, Edit2, Trash2, Plus } from '../icons';
 import { getSeverityBadgeClass } from '../../utils/severity';
 import UnifiedModal from '../common/UnifiedModal';
 import CvssCalculator from './CvssCalculator';
 import apiClient from '../../services/api';
 
-const CardsTable = ({ cards, assessmentId, onUpdate }) => {
+const CardsTable = ({ cards, assessmentId, onUpdate, hideAddButton = false, externalTrigger = 0 }) => {
   const [expandedCards, setExpandedCards] = useState(new Set());
 
   // Modal state for Add/Edit
@@ -84,6 +84,11 @@ const CardsTable = ({ cards, assessmentId, onUpdate }) => {
     });
     setShowModal(true);
   };
+
+  // Open modal when header button triggers it
+  useEffect(() => {
+    if (externalTrigger > 0) openAddModal();
+  }, [externalTrigger]);
 
   // Open Edit modal
   const openEditModal = (card) => {
@@ -166,13 +171,15 @@ const CardsTable = ({ cards, assessmentId, onUpdate }) => {
   if (cards.length === 0) {
     return (
       <div className="text-center py-8 text-sm text-neutral-500 dark:text-neutral-400">
-        <button
-          onClick={openAddModal}
-          className="mb-4 px-4 py-2 bg-primary-600 dark:bg-primary-700 text-white rounded-lg text-sm hover:bg-primary-700 dark:hover:bg-primary-600 transition-colors"
-        >
-          <Plus className="w-4 h-4 inline mr-2" />
-          Add Card
-        </button>
+        {!hideAddButton && (
+          <button
+            onClick={openAddModal}
+            className="mb-4 px-4 py-2 bg-primary-600 dark:bg-primary-700 text-white rounded-lg text-sm hover:bg-primary-700 dark:hover:bg-primary-600 transition-colors"
+          >
+            <Plus className="w-4 h-4 inline mr-2" />
+            Add Card
+          </button>
+        )}
         <p>No cards in this phase</p>
       </div>
     );
@@ -181,15 +188,17 @@ const CardsTable = ({ cards, assessmentId, onUpdate }) => {
   return (
     <>
       <div className="space-y-2">
-        <div className="flex justify-end mb-2">
-          <button
-            onClick={openAddModal}
-            className="px-3 py-1.5 bg-primary-600 dark:bg-primary-700 text-white rounded-lg text-xs hover:bg-primary-700 dark:hover:bg-primary-600 transition-colors flex items-center gap-1"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            Add Card
-          </button>
-        </div>
+        {!hideAddButton && (
+          <div className="flex justify-end mb-2">
+            <button
+              onClick={openAddModal}
+              className="px-3 py-1.5 bg-primary-600 dark:bg-primary-700 text-white rounded-lg text-xs hover:bg-primary-700 dark:hover:bg-primary-600 transition-colors flex items-center gap-1"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              Add Card
+            </button>
+          </div>
+        )}
 
         {cards.map((card) => {
           const isExpanded = expandedCards.has(card.id);

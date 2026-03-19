@@ -15,6 +15,7 @@ const CreateAssessmentModal = ({ onClose, onSuccess }) => {
     category: '',
     environment: 'non_specifie',
     stealth_profile: 'normal',
+    ctf_mode: false,
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -166,6 +167,31 @@ const CreateAssessmentModal = ({ onClose, onSuccess }) => {
                 {formData.stealth_profile === 'normal' && 'Standard pentesting speed. No evasion techniques applied.'}
                 {formData.stealth_profile === 'aggressive' && 'Maximum parallelism (50 threads), no delays. Fast but noisy.'}
               </p>
+            </div>
+
+            {/* CTF Mode */}
+            <div className="flex items-center justify-between p-3 bg-neutral-50 dark:bg-neutral-700/50 rounded-lg border border-neutral-200 dark:border-neutral-600">
+              <div>
+                <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300">
+                  CTF Mode
+                </label>
+                <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
+                  Enable Capture The Flag challenge tracking
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setFormData({ ...formData, ctf_mode: !formData.ctf_mode })}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                  formData.ctf_mode ? 'bg-purple-600' : 'bg-neutral-300 dark:bg-neutral-600'
+                }`}
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                    formData.ctf_mode ? 'translate-x-6' : 'translate-x-1'
+                  }`}
+                />
+              </button>
             </div>
 
             {/* Scope */}

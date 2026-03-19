@@ -64,7 +64,7 @@ def get_tool_definitions() -> List[Tool]:
                 "properties": {
                     "card_type": {
                         "type": "string",
-                        "enum": ["finding", "observation", "info"],
+                        "enum": ["finding", "observation", "info", "challenge"],
                         "description": "Type of card to create"
                     },
                     "title": {
@@ -107,6 +107,25 @@ def get_tool_definitions() -> List[Tool]:
                     "context": {
                         "type": "string",
                         "description": "Contextual information"
+                    },
+                    # CTF challenge fields
+                    "flag": {
+                        "type": "string",
+                        "description": "Captured flag value (for challenge cards)"
+                    },
+                    "flag_status": {
+                        "type": "string",
+                        "enum": ["captured", "not_captured", "in_progress"],
+                        "description": "Flag capture status (for challenge cards, default: not_captured)"
+                    },
+                    "points": {
+                        "type": "integer",
+                        "description": "Challenge point value (for challenge cards)"
+                    },
+                    "challenge_category": {
+                        "type": "string",
+                        "enum": ["web", "pwn", "crypto", "forensics", "reverse", "misc", "osint", "steganography"],
+                        "description": "Challenge category (for challenge cards)"
                     }
                 },
                 "required": ["card_type", "title"]
@@ -120,7 +139,7 @@ def get_tool_definitions() -> List[Tool]:
                 "properties": {
                     "card_type": {
                         "type": "string",
-                        "enum": ["finding", "observation", "info"],
+                        "enum": ["finding", "observation", "info", "challenge"],
                         "description": "Filter by card type (optional, shows all if not specified)"
                     },
                     "severity": {

@@ -32,6 +32,12 @@ class Card(Base):
     proof = Column(Text)
     context = Column(Text)
 
+    # CTF fields
+    flag = Column(Text)
+    flag_status = Column(String(50))  # captured, not_captured, in_progress
+    points = Column(Integer)
+    challenge_category = Column(String(50))  # web, pwn, crypto, forensics, reverse, misc, osint, steganography
+
     created_at = Column(TIMESTAMP, server_default=func.now())
     updated_at = Column(TIMESTAMP, server_default=func.now(), onupdate=func.now())
 

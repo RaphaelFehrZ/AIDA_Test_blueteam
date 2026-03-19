@@ -12,6 +12,7 @@ import CommandHistoryRefactored from '../components/assessment/CommandHistoryRef
 import ImportScanModal from '../components/assessment/ImportScanModal';
 import CredentialsManager from '../components/assessment/CredentialsManager';
 import ContextDocumentsPanel from '../components/assessment/ContextDocumentsPanel';
+import CtfOverview from '../components/assessment/CtfOverview';
 
 import ChangeContainerModal from '../components/workspace/ChangeContainerModal';
 import MarkdownDocumentsModal from '../components/assessment/MarkdownDocumentsModal';
@@ -236,6 +237,7 @@ const AssessmentDetail = () => {
     const findings = cards.filter(c => c.card_type === 'finding');
     const observations = cards.filter(c => c.card_type === 'observation');
     const infos = cards.filter(c => c.card_type === 'info');
+    const challenges = cards.filter(c => c.card_type === 'challenge');
 
     // Recent activity (last 7 days)
     const sevenDaysAgo = new Date();
@@ -251,6 +253,7 @@ const AssessmentDetail = () => {
       findings: findings.length,
       observations: observations.length,
       infos: infos.length,
+      challenges: challenges.length,
       critical: findings.filter(f => f.severity === 'CRITICAL').length,
       high: findings.filter(f => f.severity === 'HIGH').length,
       medium: findings.filter(f => f.severity === 'MEDIUM').length,
@@ -275,6 +278,9 @@ const AssessmentDetail = () => {
         break;
       case 'info':
         result = cards.filter(c => c.card_type === 'info');
+        break;
+      case 'challenges':
+        result = cards.filter(c => c.card_type === 'challenge');
         break;
       case 'critical':
         result = cards.filter(c => c.severity === 'CRITICAL');
@@ -763,6 +769,20 @@ const AssessmentDetail = () => {
             <span className={`${cardFilter === 'info' ? 'opacity-90' : 'opacity-60'}`}>{stats.infos}</span>
           </button>
 
+          {/* Challenges filter - only when CTF mode is on */}
+          {assessment?.ctf_mode && (
+            <button
+              onClick={() => setCardFilter('challenges')}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all ${cardFilter === 'challenges'
+                ? 'bg-purple-500 text-white shadow-sm'
+                : 'bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-300 hover:bg-purple-100 dark:hover:bg-purple-900/30'
+                }`}
+            >
+              <span>Challenges</span>
+              <span className={`${cardFilter === 'challenges' ? 'opacity-90' : 'opacity-60'}`}>{stats.challenges}</span>
+            </button>
+          )}
+
           {/* Divider */}
           <div className="h-6 w-px bg-neutral-300 dark:bg-neutral-600 mx-1"></div>
 
@@ -890,8 +910,20 @@ const AssessmentDetail = () => {
                     assessmentId={id}
                     onUpdate={loadAssessment}
                     hideAddButton
+                    ctfMode={assessment?.ctf_mode}
                   />
                 </>
+              )}
+
+              {/* CTF Overview - only when ctf_mode is enabled */}
+              {assessment?.ctf_mode && (
+                <div>
+                  <h3 className="text-lg font-semibold text-neutral-900 dark:text-neutral-100 mb-4 flex items-center gap-2">
+                    <span className="text-purple-500">&#9873;</span>
+                    CTF Scoreboard
+                  </h3>
+                  <CtfOverview cards={cards} />
+                </div>
               )}
 
               {stats.totalCards === 0 && (
@@ -904,13 +936,21 @@ const AssessmentDetail = () => {
           ) : (
             /* Filtered view */
             <div>
-              <CardsTable
-                cards={filteredCards}
-                assessmentId={id}
-                onUpdate={loadAssessment}
-                hideAddButton
-                externalTrigger={addCardTrigger}
-              />
+              {filteredCards.length === 0 ? (
+                <div className="text-center py-12 text-neutral-500 dark:text-neutral-400">
+                  <Shield className="w-12 h-12 mx-auto mb-3 text-neutral-300 dark:text-neutral-600" />
+                  <p className="text-sm">No cards found for this filter</p>
+                </div>
+              ) : (
+                <CardsTable
+                  cards={filteredCards}
+                  assessmentId={id}
+                  onUpdate={loadAssessment}
+                  hideAddButton
+                  externalTrigger={addCardTrigger}
+                  ctfMode={assessment?.ctf_mode}
+                />
+              )}
             </div>
           )}
         </div>

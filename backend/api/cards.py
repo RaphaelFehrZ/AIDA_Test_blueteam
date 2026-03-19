@@ -79,11 +79,32 @@ async def create_card(
         )
 
     # Validate card_type
-    if card.card_type not in ["finding", "observation", "info"]:
+    valid_card_types = ["finding", "observation", "info", "challenge"]
+    if card.card_type not in valid_card_types:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="card_type must be one of: finding, observation, info"
+            detail=f"card_type must be one of: {', '.join(valid_card_types)}"
         )
+
+    # CTF challenge validation
+    if card.card_type == "challenge":
+        if not assessment.ctf_mode:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot create challenge cards on non-CTF assessments. Enable ctf_mode on the assessment first."
+            )
+        valid_flag_statuses = ["captured", "not_captured", "in_progress"]
+        if card.flag_status and card.flag_status not in valid_flag_statuses:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"flag_status must be one of: {', '.join(valid_flag_statuses)}"
+            )
+        valid_categories = ["web", "pwn", "crypto", "forensics", "reverse", "misc", "osint", "steganography"]
+        if card.challenge_category and card.challenge_category not in valid_categories:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"challenge_category must be one of: {', '.join(valid_categories)}"
+            )
 
     # Create card
     new_card = Card(
@@ -128,6 +149,38 @@ async def update_card(
 
     # Update fields (partial update - only provided fields)
     update_data = card_update.model_dump(exclude_unset=True)
+
+    # Validate card_type if being changed
+    card_type = update_data.get("card_type", card.card_type)
+    if "card_type" in update_data:
+        valid_card_types = ["finding", "observation", "info", "challenge"]
+        if card_type not in valid_card_types:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"card_type must be one of: {', '.join(valid_card_types)}"
+            )
+
+    # CTF challenge validation on update
+    if card_type == "challenge" or card.card_type == "challenge":
+        assessment = db.query(Assessment).filter(Assessment.id == assessment_id).first()
+        if assessment and not assessment.ctf_mode:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot have challenge cards on non-CTF assessments."
+            )
+        valid_flag_statuses = ["captured", "not_captured", "in_progress"]
+        if "flag_status" in update_data and update_data["flag_status"] and update_data["flag_status"] not in valid_flag_statuses:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"flag_status must be one of: {', '.join(valid_flag_statuses)}"
+            )
+        valid_categories = ["web", "pwn", "crypto", "forensics", "reverse", "misc", "osint", "steganography"]
+        if "challenge_category" in update_data and update_data["challenge_category"] and update_data["challenge_category"] not in valid_categories:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"challenge_category must be one of: {', '.join(valid_categories)}"
+            )
+
     for field, value in update_data.items():
         setattr(card, field, value)
 

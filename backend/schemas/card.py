@@ -19,6 +19,11 @@ class CardBase(BaseModel):
     notes: Optional[str] = None
     proof: Optional[str] = None
     context: Optional[str] = None
+    # CTF fields
+    flag: Optional[str] = None
+    flag_status: Optional[str] = None
+    points: Optional[int] = None
+    challenge_category: Optional[str] = None
 
 
 class CardCreate(CardBase):
@@ -40,6 +45,11 @@ class CardUpdate(BaseModel):
     notes: Optional[str] = None
     proof: Optional[str] = None
     context: Optional[str] = None
+    # CTF fields
+    flag: Optional[str] = None
+    flag_status: Optional[str] = None
+    points: Optional[int] = None
+    challenge_category: Optional[str] = None
 
 
 class CardResponse(CardBase):

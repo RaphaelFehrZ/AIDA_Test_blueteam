@@ -37,6 +37,9 @@ class Assessment(Base):
     # Environment Setup
     environment_notes = Column(Text)
 
+    # CTF Mode
+    ctf_mode = Column(Boolean, default=False)
+
     # Stealth & Evasion Configuration
     stealth_profile = Column(String(50), default="normal")  # ghost, careful, normal, aggressive
     proxy_config = Column(Text)  # e.g. "socks5://127.0.0.1:9050"

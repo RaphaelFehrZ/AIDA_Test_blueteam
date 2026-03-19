@@ -425,7 +425,8 @@ async def _handle_add_card(arguments: dict, mcp_service) -> List[TextContent]:
     # Add all optional fields if provided (don't filter by type - backend accepts all)
     optional_fields = [
         "target_service", "severity", "status",
-        "technical_analysis", "proof", "notes", "context"
+        "technical_analysis", "proof", "notes", "context",
+        "flag", "flag_status", "points", "challenge_category"
     ]
     for field in optional_fields:
         if field in arguments and arguments[field] is not None:
@@ -474,6 +475,14 @@ async def _handle_add_card(arguments: dict, mcp_service) -> List[TextContent]:
         return [TextContent(
             type="text",
             text=f"Observation added: {title} [ID: {card_id}]"
+        )]
+    elif card_type == "challenge":
+        pts = card_data.get("points", "?")
+        cat = card_data.get("challenge_category", "misc")
+        flag_st = card_data.get("flag_status", "not_captured")
+        return [TextContent(
+            type="text",
+            text=f"Challenge added: {title} [{cat}] ({pts} pts, {flag_st}) [ID: {card_id}]"
         )]
     else:  # info
         return [TextContent(

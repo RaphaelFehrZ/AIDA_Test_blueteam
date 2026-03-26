@@ -181,6 +181,12 @@ async def get_platform_setting(key: str, db: Session = Depends(get_db)):
                 value=str(settings.MAX_SOURCE_ZIP_SIZE // (1024 * 1024)),
                 description="Maximum size (MB) for a source-code ZIP uploaded to /source"
             )
+        if key == "ctf_mode_enabled":
+            return PlatformSettingResponse(
+                key=key,
+                value="false",
+                description="Global toggle to enable CTF mode availability in assessments"
+            )
         raise fastapi.HTTPException(status_code=404, detail=f"Setting '{key}' not found")
 
     return PlatformSettingResponse(
@@ -249,6 +255,11 @@ async def update_platform_setting(
                 )
         except ValueError:
             raise fastapi.HTTPException(status_code=400, detail=f"{key} must be a valid integer (MB)")
+
+    # Validate ctf_mode_enabled
+    if key == "ctf_mode_enabled":
+        if request.value not in ("true", "false"):
+            raise fastapi.HTTPException(status_code=400, detail="ctf_mode_enabled must be 'true' or 'false'")
 
     # Validate container_name if updating container_name
     if key == "container_name":

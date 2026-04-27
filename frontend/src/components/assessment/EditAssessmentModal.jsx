@@ -7,7 +7,7 @@ const EditAssessmentModal = ({ assessment, onClose, onSuccess, ctfModeEnabled })
     name: '',
     client_name: '',
     category: '',
-    environment: 'non_specifie',
+    environment: 'non_specified',
     start_date: '',
     end_date: '',
     scope: '',
@@ -26,7 +26,7 @@ const EditAssessmentModal = ({ assessment, onClose, onSuccess, ctfModeEnabled })
         name: assessment.name || '',
         client_name: assessment.client_name || '',
         category: assessment.category || '',
-        environment: assessment.environment || 'non_specifie',
+        environment: assessment.environment || 'non_specified',
         start_date: assessment.start_date || '',
         end_date: assessment.end_date || '',
         scope: assessment.scope || '',
@@ -59,7 +59,7 @@ const EditAssessmentModal = ({ assessment, onClose, onSuccess, ctfModeEnabled })
         // Text fields: empty string → null
         client_name: formData.client_name?.trim() || null,
         category: formData.category?.trim() || null,
-        environment: formData.environment || 'non_specifie',
+        environment: formData.environment || 'non_specified',
         scope: formData.scope?.trim() || null,
         limitations: formData.limitations?.trim() || null,
         objectives: formData.objectives?.trim() || null,
@@ -189,7 +189,7 @@ const EditAssessmentModal = ({ assessment, onClose, onSuccess, ctfModeEnabled })
                       onChange={(e) => setFormData({ ...formData, environment: e.target.value })}
                       className="input"
                     >
-                      <option value="non_specifie">Non spécifié</option>
+                      <option value="non_specified">Non spécifié</option>
                       <option value="production">Production</option>
                       <option value="dev">Dev</option>
                     </select>

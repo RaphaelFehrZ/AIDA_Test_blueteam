@@ -13,7 +13,7 @@ const CreateAssessmentModal = ({ onClose, onSuccess, ctfModeEnabled }) => {
     start_date: '',
     end_date: '',
     category: '',
-    environment: 'non_specifie',
+    environment: 'non_specified',
     stealth_profile: 'normal',
     ctf_mode: false,
   });
@@ -140,7 +140,7 @@ const CreateAssessmentModal = ({ onClose, onSuccess, ctfModeEnabled }) => {
                 onChange={(e) => setFormData({ ...formData, environment: e.target.value })}
                 className="input"
               >
-                <option value="non_specifie">Non spécifié</option>
+                <option value="non_specified">Non spécifié</option>
                 <option value="production">Production</option>
                 <option value="dev">Dev</option>
               </select>

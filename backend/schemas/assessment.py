@@ -19,7 +19,7 @@ class AssessmentBase(BaseModel):
     credentials: Optional[str] = None
     access_info: Optional[str] = None
     category: Optional[str] = None
-    environment: Optional[str] = "non_specifie"
+    environment: Optional[str] = "non_specified"
     environment_notes: Optional[str] = None
     # Stealth & Evasion
     stealth_profile: Optional[str] = "normal"

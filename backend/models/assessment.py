@@ -32,7 +32,7 @@ class Assessment(Base):
     credentials = Column(Text)
     access_info = Column(Text)
     category = Column(String(100))  # API, Website, External Infra, etc.
-    environment = Column(String(50), default="non_specifie")  # production, dev, non_specifie
+    environment = Column(String(50), default="non_specified")  # production, dev, non_specified
 
     # Environment Setup
     environment_notes = Column(Text)

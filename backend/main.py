@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from config import settings
 from database import init_db
-from api import assessments, cards, recon, sections, containers, folders, global_commands, search, system, credentials, websocket, workspace, pending_commands, context_documents, source_code
+from api import assessments, cards, recon, sections, containers, folders, global_commands, search, system, credentials, websocket, workspace, pending_commands, context_documents, source_code, exports
 from api import commands
 from api.commands import global_router as commands_global_router
 from utils.logger import setup_logging, get_logger
@@ -65,6 +65,7 @@ app.include_router(pending_commands.router, prefix=settings.API_V1_PREFIX)  # Pe
 app.include_router(pending_commands.settings_router, prefix=settings.API_V1_PREFIX)  # Command settings
 app.include_router(context_documents.router, prefix=settings.API_V1_PREFIX)  # Context documents
 app.include_router(source_code.router, prefix=settings.API_V1_PREFIX)  # Source code import
+app.include_router(exports.router, prefix=settings.API_V1_PREFIX)  # CSV / LaTeX export
 
 
 @app.on_event("startup")

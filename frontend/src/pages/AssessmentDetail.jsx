@@ -1,6 +1,6 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { Target, Server, Shield, ArrowLeft, AlertTriangle, Info, Eye, TrendingUp, Filter, FolderOpen, RefreshCw, FileText, Plus } from '../components/icons';
+import { Target, Server, Shield, ArrowLeft, AlertTriangle, Info, Eye, TrendingUp, Filter, FolderOpen, RefreshCw, FileText, Plus, Download, ChevronDown } from '../components/icons';
 import apiClient from '../services/api';
 import workspaceService from '../services/workspaceService';
 import EditableField from '../components/common/EditableField';
@@ -54,6 +54,9 @@ const AssessmentDetail = () => {
   const [showChangeContainerModal, setShowChangeContainerModal] = useState(false);
   const [showMarkdownModal, setShowMarkdownModal] = useState(false);
   const [showStealthConfig, setShowStealthConfig] = useState(false);
+  const [showExportMenu, setShowExportMenu] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const exportMenuRef = useRef(null);
 
   // WebSocket connection for real-time updates
   const { subscribe, isConnected } = useWebSocket(id);
@@ -232,6 +235,49 @@ const AssessmentDetail = () => {
     await loadAssessment();
   };
 
+  // Close export menu when clicking outside
+  useEffect(() => {
+    if (!showExportMenu) return;
+    const onClick = (e) => {
+      if (exportMenuRef.current && !exportMenuRef.current.contains(e.target)) {
+        setShowExportMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', onClick);
+    return () => document.removeEventListener('mousedown', onClick);
+  }, [showExportMenu]);
+
+  const handleExport = async (format) => {
+    setShowExportMenu(false);
+    setExporting(true);
+    try {
+      const response = await apiClient.get(`/assessments/${id}/export/${format}`, {
+        responseType: 'blob',
+      });
+      // Derive filename from Content-Disposition or fall back
+      const disposition = response.headers['content-disposition'] || '';
+      const match = disposition.match(/filename="?([^"]+)"?/i);
+      const fallback = format === 'csv'
+        ? `${assessment?.name || 'assessment'}_findings.csv`
+        : `${assessment?.name || 'assessment'}_findings_latex.zip`;
+      const filename = match ? match[1] : fallback;
+
+      const blobUrl = URL.createObjectURL(response.data);
+      const anchor = document.createElement('a');
+      anchor.href = blobUrl;
+      anchor.download = filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      URL.revokeObjectURL(blobUrl);
+    } catch (error) {
+      console.error(`Failed to export ${format}:`, error);
+      alert(`Failed to export ${format.toUpperCase()}: ${error.response?.data?.detail || error.message}`);
+    } finally {
+      setExporting(false);
+    }
+  };
+
   // Calculate statistics
   const stats = useMemo(() => {
     const findings = cards.filter(c => c.card_type === 'finding');
@@ -356,7 +402,7 @@ const AssessmentDetail = () => {
             <h1 className="text-lg font-semibold text-gray-900 dark:text-neutral-100">{assessment.name}</h1>
             <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-neutral-400">
               <span>{assessment.client_name || 'No client'}</span>
-              {assessment.environment && assessment.environment !== 'non_specifie' && (
+              {assessment.environment && assessment.environment !== 'non_specified' && (
                 <>
                   <span>•</span>
                   <span className={`font-medium ${assessment.environment === 'production'
@@ -439,6 +485,46 @@ const AssessmentDetail = () => {
             <FileText className="w-3.5 h-3.5" />
             <span>Docs</span>
           </button>
+          <div className="relative" ref={exportMenuRef}>
+            <button
+              onClick={() => setShowExportMenu((v) => !v)}
+              disabled={exporting}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-neutral-700 dark:text-neutral-300 bg-neutral-50 dark:bg-neutral-700/50 border border-neutral-200 dark:border-neutral-600 hover:bg-neutral-100 dark:hover:bg-neutral-700 hover:border-neutral-300 dark:hover:border-neutral-500 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Export findings"
+            >
+              {exporting ? (
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Download className="w-3.5 h-3.5" />
+              )}
+              <span>Export</span>
+              <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showExportMenu ? 'rotate-180' : ''}`} />
+            </button>
+            {showExportMenu && (
+              <div className="absolute right-0 mt-1 w-48 bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-md shadow-lg z-20 overflow-hidden">
+                <button
+                  onClick={() => handleExport('csv')}
+                  className="w-full text-left px-3 py-2 text-xs text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-700 flex items-center gap-2"
+                >
+                  <FileText className="w-3.5 h-3.5" />
+                  <div>
+                    <div className="font-medium">Export as CSV</div>
+                    <div className="text-[10px] text-neutral-500 dark:text-neutral-400">All cards — spreadsheet friendly</div>
+                  </div>
+                </button>
+                <button
+                  onClick={() => handleExport('latex')}
+                  className="w-full text-left px-3 py-2 text-xs text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-700 flex items-center gap-2 border-t border-neutral-100 dark:border-neutral-700"
+                >
+                  <FileText className="w-3.5 h-3.5" />
+                  <div>
+                    <div className="font-medium">Export as LaTeX</div>
+                    <div className="text-[10px] text-neutral-500 dark:text-neutral-400">Findings bundle (.zip) for report template</div>
+                  </div>
+                </button>
+              </div>
+            )}
+          </div>
           <span className={`px-2 py-1 rounded-full text-xs font-medium ${assessment.status === 'in_progress'
             ? 'bg-primary-100 dark:bg-primary-900/30 text-primary-700 dark:text-primary-300'
             : assessment.status === 'completed'

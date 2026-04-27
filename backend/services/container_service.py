@@ -77,7 +77,7 @@ class ContainerService:
 
         return sanitized
 
-    async def _run_command(self, command: List[str], timeout: float = 10.0) -> Dict[str, Any]:
+    async def _run_command(self, command: List[str], timeout: float = 30.0) -> Dict[str, Any]:
         """Run a system command with a timeout to prevent hangs on docker socket issues"""
         try:
             process = await asyncio.create_subprocess_exec(
@@ -144,8 +144,11 @@ class ContainerService:
                             container_name = container_data.get("Names", "unknown").lstrip('/')
                             image = container_data.get("Image", "")
 
-                            # Only include containers whose name starts with "exegol-"
-                            if container_name.lower().startswith("exegol-"):
+                            # Accept containers matching any configured prefix (aida-, exegol-, ...)
+                            allowed_prefixes = tuple(
+                                p.strip() for p in settings.CONTAINER_PREFIX_FILTER.split(",") if p.strip()
+                            )
+                            if container_name.lower().startswith(allowed_prefixes):
                                 containers.append({
                                     "name": container_name,
                                     "image": image,

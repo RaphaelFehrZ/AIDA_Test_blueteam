@@ -354,8 +354,8 @@ const Settings = () => {
 
   const handleSaveCommandHistoryLimit = async () => {
     // Validate history limit value
-    if (commandHistoryLimit < 5 || commandHistoryLimit > 100) {
-      setHistoryLimitMessage({ type: 'error', text: 'Command history limit must be between 5 and 100' });
+    if (commandHistoryLimit < 0 || commandHistoryLimit > 100) {
+      setHistoryLimitMessage({ type: 'error', text: 'Command history limit must be between 0 and 100' });
       setTimeout(() => setHistoryLimitMessage(null), 5000);
       return;
     }
@@ -812,10 +812,10 @@ const Settings = () => {
                 <div className="flex items-center gap-2">
                   <input
                     type="number"
-                    min="5"
+                    min="0"
                     max="100"
                     value={commandHistoryLimit}
-                    onChange={(e) => setCommandHistoryLimit(Math.min(100, Math.max(5, parseInt(e.target.value) || 5)))}
+                    onChange={(e) => setCommandHistoryLimit(Math.min(100, Math.max(0, parseInt(e.target.value) || 0)))}
                     className="w-24 px-2 py-1.5 border border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 rounded text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                   />
                   <span className="text-xs text-neutral-600 dark:text-neutral-400">commands</span>
@@ -854,6 +854,16 @@ const Settings = () => {
                       <AlertCircle className="w-3 h-3 flex-shrink-0" />
                     )}
                     <span>{historyLimitMessage.text}</span>
+                  </div>
+                )}
+
+                {/* High history limit warning */}
+                {commandHistoryLimit > 10 && (
+                  <div className="mt-3 p-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700/50 flex items-start gap-2">
+                    <AlertCircle className="w-4 h-4 text-amber-500 dark:text-amber-400 flex-shrink-0 mt-0.5" />
+                    <div className="text-xs text-amber-700 dark:text-amber-300">
+                      <span className="font-semibold">High token consumption warning —</span> Injecting more than 10 commands into context can consume a significant number of tokens per request and may degrade AI performance on large assessments.
+                    </div>
                   </div>
                 )}
               </div>

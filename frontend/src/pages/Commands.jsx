@@ -21,6 +21,7 @@ const Commands = () => {
   const [total, setTotal] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [typeFilter, setTypeFilter] = useState('all');
   const [expandedCommand, setExpandedCommand] = useState(null);
   const [searchDebounceTimer, setSearchDebounceTimer] = useState(null);
 
@@ -47,18 +48,21 @@ const Commands = () => {
   const [filterKeywords, setFilterKeywords] = useState([]);
   const [newKeyword, setNewKeyword] = useState('');
   const [savingMode, setSavingMode] = useState(false);
+  const [httpMethodRules, setHttpMethodRules] = useState({});
 
   // Approval state
   const [processingId, setProcessingId] = useState(null);
+  const [expandedPendingId, setExpandedPendingId] = useState(null);
+  const [expandedHistoryId, setExpandedHistoryId] = useState(null);
 
   // WebSocket for real-time updates
   const { subscribe } = useWebSocketContext();
 
   // Keep filters in a ref so WebSocket handlers always see the latest values
-  const filterRef = useRef({ statusFilter, searchQuery });
+  const filterRef = useRef({ statusFilter, searchQuery, typeFilter });
   useEffect(() => {
-    filterRef.current = { statusFilter, searchQuery };
-  }, [statusFilter, searchQuery]);
+    filterRef.current = { statusFilter, searchQuery, typeFilter };
+  }, [statusFilter, searchQuery, typeFilter]);
 
   // Load initial data
   useEffect(() => {
@@ -85,12 +89,14 @@ const Commands = () => {
     const prependCommand = (data, isSuccess) => {
       const newCmd = data?.command;
       if (!newCmd) return;
-      const { statusFilter: sf, searchQuery: sq } = filterRef.current;
+      const { statusFilter: sf, searchQuery: sq, typeFilter: tf } = filterRef.current;
       const statusMatch = sf === 'all' || (isSuccess ? sf === 'passed' : sf === 'failed');
       const searchMatch = !sq ||
         newCmd.command?.toLowerCase().includes(sq.toLowerCase()) ||
         newCmd.assessment_name?.toLowerCase().includes(sq.toLowerCase());
-      if (statusMatch && searchMatch) {
+      const cmdType = newCmd.command_type || 'shell';
+      const typeMatch = tf === 'all' || cmdType === tf;
+      if (statusMatch && searchMatch && typeMatch) {
         setCommands(prev => [newCmd, ...prev]);
         setTotal(prev => prev + 1);
       }
@@ -126,6 +132,7 @@ const Commands = () => {
       const settings = await commandSettingsService.getCommandSettings();
       setExecutionMode(settings.execution_mode || 'open');
       setFilterKeywords(settings.filter_keywords || []);
+      setHttpMethodRules(settings.http_method_rules || {});
     } catch (error) {
       // console.error('Failed to load settings:', error);
     }
@@ -172,7 +179,8 @@ const Commands = () => {
       setLoading(true);
       const skip = commands.length;
       const status = statusFilter === 'passed' ? 'success' : statusFilter === 'failed' ? 'failed' : null;
-      const data = await commandService.getAllCommands({ skip, limit: 50, status, search: searchQuery.trim() || null });
+      const command_type = typeFilter !== 'all' ? typeFilter : null;
+      const data = await commandService.getAllCommands({ skip, limit: 50, status, search: searchQuery.trim() || null, command_type });
       setCommands((prev) => [...prev, ...data.commands]);
       setTotal(data.total);
       setHasMore(data.has_more);
@@ -181,7 +189,7 @@ const Commands = () => {
     } finally {
       setLoading(false);
     }
-  }, [commands.length, statusFilter, searchQuery, hasMore, loading]);
+  }, [commands.length, statusFilter, typeFilter, searchQuery, hasMore, loading]);
 
   const loadInitialCommands = async () => {
     try {
@@ -197,11 +205,17 @@ const Commands = () => {
     }
   };
 
-  const reloadWithFilters = useCallback(async () => {
+  // Stable reload — always reads fresh values from filterRef, accepts overrides for
+  // values that changed THIS render (state not yet committed when called synchronously)
+  const reloadWithFilters = useCallback(async ({ sf, tf, sq } = {}) => {
+    const resolvedSf = sf ?? filterRef.current.statusFilter;
+    const resolvedTf = tf ?? filterRef.current.typeFilter;
+    const resolvedSq = sq ?? filterRef.current.searchQuery;
     try {
       setLoading(true);
-      const status = statusFilter === 'passed' ? 'success' : statusFilter === 'failed' ? 'failed' : null;
-      const data = await commandService.getAllCommands({ skip: 0, limit: 50, status, search: searchQuery.trim() || null });
+      const status = resolvedSf === 'passed' ? 'success' : resolvedSf === 'failed' ? 'failed' : null;
+      const command_type = resolvedTf !== 'all' ? resolvedTf : null;
+      const data = await commandService.getAllCommands({ skip: 0, limit: 50, status, search: resolvedSq.trim() || null, command_type });
       setCommands(data.commands);
       setTotal(data.total);
       setHasMore(data.has_more);
@@ -211,18 +225,25 @@ const Commands = () => {
     } finally {
       setLoading(false);
     }
-  }, [statusFilter, searchQuery]);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => {
-    if (!initialLoading && mainTab === 'all') {
-      reloadWithFilters();
-    }
-  }, [statusFilter]);
+  const handleStatusFilterChange = (newStatus) => {
+    setStatusFilter(newStatus);
+    filterRef.current = { ...filterRef.current, statusFilter: newStatus };
+    if (!initialLoading) reloadWithFilters({ sf: newStatus });
+  };
+
+  const handleTypeFilterChange = (newType) => {
+    setTypeFilter(newType);
+    filterRef.current = { ...filterRef.current, typeFilter: newType };
+    if (!initialLoading) reloadWithFilters({ tf: newType });
+  };
 
   const handleSearchChange = (value) => {
     setSearchQuery(value);
+    filterRef.current = { ...filterRef.current, searchQuery: value };
     if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
-    const timer = setTimeout(() => { if (!initialLoading) reloadWithFilters(); }, 500);
+    const timer = setTimeout(() => { if (!initialLoading) reloadWithFilters({ sq: value }); }, 500);
     setSearchDebounceTimer(timer);
   };
 
@@ -260,6 +281,18 @@ const Commands = () => {
       setFilterKeywords(result.filter_keywords);
     } catch (error) {
       console.error('Failed to remove keyword:', error);
+    }
+  };
+
+  const handleHttpMethodRuleChange = async (method, action) => {
+    const updated = { ...httpMethodRules, [method]: action };
+    // Remove 'inherit' entries to keep the stored object clean
+    if (action === 'inherit') delete updated[method];
+    try {
+      const result = await commandSettingsService.updateHttpMethodRules(updated);
+      setHttpMethodRules(result.http_method_rules || {});
+    } catch (error) {
+      console.error('Failed to update HTTP method rule:', error);
     }
   };
 
@@ -318,6 +351,24 @@ const Commands = () => {
     if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
     if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
     return date.toLocaleDateString();
+  };
+
+  // Smart preview: context around matched keyword, or first line of command
+  const getCommandPreview = (command, matchedKeywords = []) => {
+    if (!command) return '';
+    if (matchedKeywords && matchedKeywords.length > 0) {
+      const kw = matchedKeywords[0];
+      const idx = command.toLowerCase().indexOf(kw.toLowerCase());
+      if (idx !== -1) {
+        const start = Math.max(0, idx - 35);
+        const end = Math.min(command.length, idx + kw.length + 35);
+        return (start > 0 ? '…' : '') + command.slice(start, end) + (end < command.length ? '…' : '');
+      }
+    }
+    const lines = command.split('\n').filter(l => l.trim());
+    const firstLine = lines[0] || command;
+    const truncated = firstLine.length > 80 ? firstLine.substring(0, 80) + '…' : firstLine;
+    return lines.length > 1 ? `${truncated} [+${lines.length - 1}]` : truncated;
   };
 
   const filteredHistory = historyCommands.filter(cmd => {
@@ -433,7 +484,7 @@ const Commands = () => {
       {mainTab === 'all' && (
         <div className="space-y-4">
           {/* Search & Filter */}
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3 flex-wrap">
             <div className="relative flex-1 max-w-sm">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-400" />
               <input
@@ -444,20 +495,55 @@ const Commands = () => {
                 className="w-full pl-9 pr-4 py-2 text-sm border border-neutral-200 dark:border-neutral-700 rounded-lg bg-white dark:bg-neutral-800 focus:outline-none focus:ring-2 focus:ring-primary-500"
               />
             </div>
+            {/* Status filter */}
             <div className="flex items-center text-xs border border-neutral-200 dark:border-neutral-700 rounded-lg overflow-hidden">
-              {['all', 'passed', 'failed'].map((status) => (
+              {[
+                { value: 'all',    label: 'All',    dot: null },
+                { value: 'passed', label: 'Passed', dot: 'bg-green-500' },
+                { value: 'failed', label: 'Failed', dot: 'bg-red-500' },
+              ].map(({ value, label, dot }) => (
                 <button
-                  key={status}
-                  onClick={() => setStatusFilter(status)}
-                  className={`px-3 py-2 transition-colors ${statusFilter === status
-                    ? 'bg-neutral-900 dark:bg-neutral-100 text-white dark:text-neutral-900'
-                    : 'text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800'
-                    }`}
+                  key={value}
+                  onClick={() => handleStatusFilterChange(value)}
+                  className={`px-3 py-2 transition-colors flex items-center gap-1.5 ${
+                    statusFilter === value
+                      ? 'bg-neutral-900 dark:bg-neutral-100 text-white dark:text-neutral-900'
+                      : 'text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800'
+                  }`}
                 >
-                  {status.charAt(0).toUpperCase() + status.slice(1)}
+                  {dot && <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${dot} ${statusFilter === value ? 'opacity-70' : ''}`} />}
+                  {label}
                 </button>
               ))}
             </div>
+            {/* Type filter */}
+            <div className="flex items-center text-xs border border-neutral-200 dark:border-neutral-700 rounded-lg overflow-hidden">
+              {[
+                { value: 'all',    label: 'All',    dot: null },
+                { value: 'shell',  label: 'Shell',  dot: 'bg-neutral-400' },
+                { value: 'python', label: 'Python', dot: 'bg-emerald-500' },
+                { value: 'http',   label: 'HTTP',   dot: 'bg-blue-500' },
+              ].map(({ value, label, dot }) => (
+                <button
+                  key={value}
+                  onClick={() => handleTypeFilterChange(value)}
+                  className={`px-3 py-2 transition-colors flex items-center gap-1.5 ${
+                    typeFilter === value
+                      ? 'bg-neutral-900 dark:bg-neutral-100 text-white dark:text-neutral-900'
+                      : 'text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800'
+                  }`}
+                >
+                  {dot && <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${dot} ${typeFilter === value ? 'opacity-70' : ''}`} />}
+                  {label}
+                </button>
+              ))}
+            </div>
+            {/* Filtered count */}
+            {(statusFilter !== 'all' || typeFilter !== 'all' || searchQuery) && (
+              <span className="text-xs text-neutral-400 dark:text-neutral-500 ml-1">
+                {total.toLocaleString()} result{total !== 1 ? 's' : ''}
+              </span>
+            )}
           </div>
 
           {/* Commands Table */}
@@ -465,7 +551,13 @@ const Commands = () => {
             {commands.length === 0 ? (
               <div className="py-12 text-center text-neutral-500">
                 <Terminal className="w-8 h-8 mx-auto mb-2 opacity-30" />
-                <p className="text-sm">{searchQuery ? 'No matching commands' : 'No commands executed yet'}</p>
+                <p className="text-sm">
+                {searchQuery
+                  ? 'No matching commands'
+                  : typeFilter !== 'all'
+                  ? `No ${typeFilter} commands found`
+                  : 'No commands executed yet'}
+              </p>
               </div>
             ) : (
               <table className="table-notion">
@@ -501,7 +593,7 @@ const Commands = () => {
                             </span>
                           ) : (
                             <code className="text-xs font-mono text-neutral-700 dark:text-neutral-300">
-                              {cmd.command.length > 60 ? cmd.command.substring(0, 60) + '...' : cmd.command}
+                              {getCommandPreview(cmd.command)}
                             </code>
                           )}
                         </td>
@@ -529,7 +621,7 @@ const Commands = () => {
                                 ) : cmd.command_type === 'http' ? (
                                   <pre className="block mt-1 p-2 bg-neutral-900 text-blue-300 border border-neutral-700 rounded text-xs font-mono overflow-auto max-h-48 whitespace-pre-wrap">{cmd.source_code}</pre>
                                 ) : (
-                                  <code className="block mt-1 p-2 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 rounded text-xs font-mono">{cmd.command}</code>
+                                  <pre className="block mt-1 p-2 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 rounded text-xs font-mono whitespace-pre-wrap break-all">{cmd.command}</pre>
                                 )}
                               </div>
                               {cmd.stdout && (
@@ -612,6 +704,35 @@ const Commands = () => {
             </div>
           )}
 
+          {/* HTTP Method Rules */}
+          <div className="flex items-center gap-3 flex-wrap">
+            <span className="text-xs text-neutral-500">HTTP method rules:</span>
+            {['GET', 'POST', 'PUT', 'DELETE', 'PATCH'].map((method) => {
+              const action = httpMethodRules[method] || 'inherit';
+              return (
+                <div key={method} className="inline-flex items-center border border-neutral-200 dark:border-neutral-700 rounded overflow-hidden text-xs">
+                  <span className="px-2 py-1 bg-neutral-50 dark:bg-neutral-800 font-mono text-neutral-700 dark:text-neutral-300 border-r border-neutral-200 dark:border-neutral-700">{method}</span>
+                  {['auto_approve', 'inherit', 'require_approval'].map((opt) => (
+                    <button
+                      key={opt}
+                      onClick={() => handleHttpMethodRuleChange(method, opt)}
+                      className={`px-2 py-1 transition-colors ${action === opt
+                        ? opt === 'auto_approve'
+                          ? 'bg-green-600 text-white'
+                          : opt === 'require_approval'
+                            ? 'bg-amber-500 text-white'
+                            : 'bg-neutral-900 dark:bg-neutral-100 text-white dark:text-neutral-900'
+                        : 'text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800'
+                      }`}
+                    >
+                      {opt === 'auto_approve' ? 'allow' : opt === 'require_approval' ? 'ask' : 'mode'}
+                    </button>
+                  ))}
+                </div>
+              );
+            })}
+          </div>
+
           {/* Approval Sub-tabs */}
           <div className="flex items-center gap-4 border-b border-neutral-200 dark:border-neutral-700">
             <button
@@ -656,41 +777,62 @@ const Commands = () => {
                   </thead>
                   <tbody>
                     {pendingCommands.map((cmd) => (
-                      <tr key={cmd.id} className="group">
-                        <td><div className={`w-2 h-2 rounded-full ${getStatusDot(cmd.status)}`} /></td>
-                        <td>
-                          <code className="text-xs font-mono text-neutral-700 dark:text-neutral-300">
-                            {cmd.command.length > 50 ? cmd.command.substring(0, 50) + '...' : cmd.command}
-                          </code>
-                        </td>
-                        <td className="text-sm text-neutral-600 dark:text-neutral-400">{cmd.assessment_name}</td>
-                        <td>
-                          {cmd.matched_keywords?.map((kw) => (
-                            <span key={kw} className="mr-1 px-1.5 py-0.5 text-xs bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 rounded">{kw}</span>
-                          ))}
-                        </td>
-                        <td className="text-xs text-neutral-500">{formatTime(cmd.created_at)}</td>
-                        <td>
-                          <div className="flex items-center gap-1">
-                            <button
-                              onClick={() => handleApprove(cmd.id)}
-                              disabled={processingId === cmd.id}
-                              className="p-1.5 text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20 rounded"
-                              title="Approve"
-                            >
-                              <Check className="w-4 h-4" />
-                            </button>
-                            <button
-                              onClick={() => handleReject(cmd.id)}
-                              disabled={processingId === cmd.id}
-                              className="p-1.5 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded"
-                              title="Reject"
-                            >
-                              <X className="w-4 h-4" />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
+                      <Fragment key={cmd.id}>
+                        <tr
+                          className="group cursor-pointer hover:bg-neutral-50 dark:hover:bg-neutral-800/50"
+                          onClick={() => setExpandedPendingId(expandedPendingId === cmd.id ? null : cmd.id)}
+                        >
+                          <td><div className={`w-2 h-2 rounded-full ${getStatusDot(cmd.status)}`} /></td>
+                          <td>
+                            <code className="text-xs font-mono text-neutral-700 dark:text-neutral-300">
+                              {getCommandPreview(cmd.command, cmd.matched_keywords)}
+                            </code>
+                          </td>
+                          <td className="text-sm text-neutral-600 dark:text-neutral-400">{cmd.assessment_name}</td>
+                          <td>
+                            {cmd.matched_keywords?.map((kw) => (
+                              <span key={kw} className="mr-1 px-1.5 py-0.5 text-xs bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 rounded">{kw}</span>
+                            ))}
+                          </td>
+                          <td className="text-xs text-neutral-500">{formatTime(cmd.created_at)}</td>
+                          <td>
+                            <div className="flex items-center gap-1">
+                              <button
+                                onClick={(e) => { e.stopPropagation(); handleApprove(cmd.id); }}
+                                disabled={processingId === cmd.id}
+                                className="p-1.5 text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20 rounded"
+                                title="Approve"
+                              >
+                                <Check className="w-4 h-4" />
+                              </button>
+                              <button
+                                onClick={(e) => { e.stopPropagation(); handleReject(cmd.id); }}
+                                disabled={processingId === cmd.id}
+                                className="p-1.5 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded"
+                                title="Reject"
+                              >
+                                <X className="w-4 h-4" />
+                              </button>
+                              {expandedPendingId === cmd.id
+                                ? <ChevronDown className="w-3 h-3 text-neutral-400" />
+                                : <ChevronRight className="w-3 h-3 text-neutral-400" />
+                              }
+                            </div>
+                          </td>
+                        </tr>
+                        {expandedPendingId === cmd.id && (
+                          <tr>
+                            <td colSpan="6" className="p-0">
+                              <div className="px-4 py-3 bg-neutral-50 dark:bg-neutral-800/50 border-t border-neutral-100 dark:border-neutral-700">
+                                <span className="text-xs font-medium text-neutral-400 uppercase mb-1 block">Full Command</span>
+                                <pre className="text-xs font-mono text-neutral-800 dark:text-neutral-200 bg-neutral-900 dark:bg-black p-3 rounded whitespace-pre-wrap break-all max-h-64 overflow-auto">
+                                  {cmd.command}
+                                </pre>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
                     ))}
                   </tbody>
                 </table>
@@ -736,25 +878,47 @@ const Commands = () => {
                     </thead>
                     <tbody>
                       {filteredHistory.map((cmd) => (
-                        <tr key={cmd.id}>
-                          <td><div className={`w-2 h-2 rounded-full ${getStatusDot(cmd.status)}`} /></td>
-                          <td>
-                            <code className="text-xs font-mono text-neutral-700 dark:text-neutral-300">
-                              {cmd.command.length > 50 ? cmd.command.substring(0, 50) + '...' : cmd.command}
-                            </code>
-                          </td>
-                          <td className="text-sm text-neutral-600 dark:text-neutral-400">{cmd.assessment_name}</td>
-                          <td>
-                            <span className={`text-xs px-2 py-0.5 rounded ${cmd.status === 'executed' ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300' :
-                              cmd.status === 'rejected' ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300' :
-                                cmd.status === 'timeout' ? 'bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300' :
-                                  'bg-neutral-100 text-neutral-600'
-                              }`}>
-                              {getStatusLabel(cmd.status)}
-                            </span>
-                          </td>
-                          <td className="text-xs text-neutral-500">{formatTime(cmd.resolved_at)}</td>
-                        </tr>
+                        <Fragment key={cmd.id}>
+                          <tr
+                            className="cursor-pointer hover:bg-neutral-50 dark:hover:bg-neutral-800/50"
+                            onClick={() => setExpandedHistoryId(expandedHistoryId === cmd.id ? null : cmd.id)}
+                          >
+                            <td><div className={`w-2 h-2 rounded-full ${getStatusDot(cmd.status)}`} /></td>
+                            <td>
+                              <code className="text-xs font-mono text-neutral-700 dark:text-neutral-300">
+                                {getCommandPreview(cmd.command)}
+                              </code>
+                            </td>
+                            <td className="text-sm text-neutral-600 dark:text-neutral-400">{cmd.assessment_name}</td>
+                            <td>
+                              <span className={`text-xs px-2 py-0.5 rounded ${cmd.status === 'executed' ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300' :
+                                cmd.status === 'rejected' ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300' :
+                                  cmd.status === 'timeout' ? 'bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300' :
+                                    'bg-neutral-100 text-neutral-600'
+                                }`}>
+                                {getStatusLabel(cmd.status)}
+                              </span>
+                            </td>
+                            <td className="text-xs text-neutral-500">{formatTime(cmd.resolved_at)}</td>
+                          </tr>
+                          {expandedHistoryId === cmd.id && (
+                            <tr>
+                              <td colSpan="5" className="p-0">
+                                <div className="px-4 py-3 bg-neutral-50 dark:bg-neutral-800/50 border-t border-neutral-100 dark:border-neutral-700">
+                                  <span className="text-xs font-medium text-neutral-400 uppercase mb-1 block">Full Command</span>
+                                  <pre className="text-xs font-mono text-neutral-800 dark:text-neutral-200 bg-neutral-900 dark:bg-black p-3 rounded whitespace-pre-wrap break-all max-h-64 overflow-auto">
+                                    {cmd.command}
+                                  </pre>
+                                  {cmd.rejection_reason && (
+                                    <div className="mt-2 text-xs text-red-600 dark:text-red-400">
+                                      <span className="font-medium">Reason: </span>{cmd.rejection_reason}
+                                    </div>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
                       ))}
                     </tbody>
                   </table>

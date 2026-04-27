@@ -50,21 +50,9 @@ async def _get_directory_contents(container_name: str, path: str) -> List[Dict[s
         is_dir = line.endswith('/')
         name = line.rstrip('/')
         
-        # Get file count for directories
-        count = 0
-        if is_dir:
-            count_cmd = f"find {path}/{name} -maxdepth 1 -type f 2>/dev/null | wc -l"
-            count_result = await _run_docker_command(container_name, count_cmd)
-            if count_result["success"]:
-                try:
-                    count = int(count_result["stdout"].strip())
-                except ValueError:
-                    count = 0
-        
         items.append({
             "name": name,
             "is_dir": is_dir,
-            "file_count": count
         })
     
     # Sort: directories first, then by name
@@ -139,47 +127,40 @@ async def generate_workspace_tree(
     # Start building tree
     tree_lines = [workspace_path]
     
-    # Get top-level contents
+    # Get top-level contents, directories only, no hidden
     items = await _get_directory_contents(container_name, workspace_path)
-    
-    if not items:
+    dirs = [i for i in items if i["is_dir"] and not i["name"].startswith(".")]
+
+    if not dirs:
         tree_lines.append("└── (empty)")
         return '\n'.join(tree_lines)
-    
-    # Standard folders to expect
-    standard_folders = ['recon', 'exploits', 'loot', 'notes', 'scripts', 'context']
-    
-    for idx, item in enumerate(items):
-        is_last = idx == len(items) - 1
+
+    for idx, item in enumerate(dirs):
+        is_last = idx == len(dirs) - 1
         prefix = "└──" if is_last else "├──"
-        
-        if item["is_dir"]:
-            # Special handling for context folder - show files
-            if item["name"] == "context":
-                tree_lines.append(f"{prefix} 📁 {item['name']}/")
-                
-                context_path = f"{workspace_path}/{item['name']}"
-                context_files = await _get_context_files_detailed(container_name, context_path)
-                
-                if context_files:
-                    for fidx, file_info in enumerate(context_files):
-                        is_last_file = fidx == len(context_files) - 1
-                        file_prefix = "    └──" if is_last else "│   └──" if is_last_file else "│   ├──" if not is_last else "    ├──"
-                        
-                        tree_lines.append(f"{file_prefix} 📄 {file_info['name']} ({file_info['size']})")
-                else:
-                    empty_prefix = "    └──" if is_last else "│   └──"
-                    tree_lines.append(f"{empty_prefix} (empty)")
+        tree_lines.append(f"{prefix} {item['name']}/")
+
+        child_prefix = "    " if is_last else "│   "
+        subdir_path = f"{workspace_path}/{item['name']}"
+
+        if item["name"] == "context":
+            # context: show files
+            context_files = await _get_context_files_detailed(container_name, subdir_path)
+            if context_files:
+                for fidx, file_info in enumerate(context_files):
+                    is_last_file = fidx == len(context_files) - 1
+                    tree_lines.append(f"{child_prefix}{'└──' if is_last_file else '├──'} {file_info['name']} ({file_info['size']})")
             else:
-                # For other folders, just show count
-                if item["file_count"] > 0:
-                    tree_lines.append(f"{prefix} 📁 {item['name']}/ ({item['file_count']} files)")
-                else:
-                    tree_lines.append(f"{prefix} 📁 {item['name']}/ (empty)")
+                tree_lines.append(f"{child_prefix}└── (empty)")
         else:
-            # Regular file in workspace root
-            tree_lines.append(f"{prefix} 📄 {item['name']}")
-    
+            # all other folders: show subdirectories
+            sub_items = await _get_directory_contents(container_name, subdir_path)
+            sub_dirs = [i for i in sub_items if i["is_dir"] and not i["name"].startswith(".")]
+            if sub_dirs:
+                for sidx, sub in enumerate(sub_dirs):
+                    is_last_sub = sidx == len(sub_dirs) - 1
+                    tree_lines.append(f"{child_prefix}{'└──' if is_last_sub else '├──'} {sub['name']}/")
+
     return '\n'.join(tree_lines)
 
 

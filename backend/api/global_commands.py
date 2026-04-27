@@ -21,7 +21,7 @@ async def get_command_stats(db: Session = Depends(get_db)):
         passed = db.query(CommandHistory).filter(CommandHistory.success == True).count()
         failed = db.query(CommandHistory).filter(CommandHistory.success == False).count()
         avg_time = db.query(func.avg(CommandHistory.execution_time)).scalar() or 0
-        
+
         return {
             "total": total,
             "passed": passed,
@@ -44,6 +44,7 @@ async def list_all_commands(
     limit: int = Query(50, ge=1, le=100, description="Number of records to return"),
     status: Optional[str] = Query(None, description="Filter by status: 'success', 'failed', or null for all"),
     search: Optional[str] = Query(None, description="Search in command text, assessment name, or phase"),
+    command_type: Optional[str] = Query(None, description="Filter by type: 'shell', 'python', 'http'"),
     db: Session = Depends(get_db)
 ):
     """
@@ -51,7 +52,7 @@ async def list_all_commands(
 
     This endpoint is optimized for the global commands view page.
     - Supports infinite scroll with skip/limit
-    - Filters by success status
+    - Filters by success status and command type
     - Full-text search across commands, assessments, and phases
     - Returns assessment names with commands
     """
@@ -67,6 +68,8 @@ async def list_all_commands(
         CommandHistory.execution_time,
         CommandHistory.success,
         CommandHistory.phase,
+        CommandHistory.command_type,
+        CommandHistory.source_code,
         CommandHistory.created_at,
         Assessment.name.label('assessment_name')
     ).join(Assessment, CommandHistory.assessment_id == Assessment.id)
@@ -76,6 +79,16 @@ async def list_all_commands(
         query = query.filter(CommandHistory.success == True)
     elif status == 'failed':
         query = query.filter(CommandHistory.success == False)
+
+    # Apply command type filter
+    if command_type:
+        if command_type == 'shell':
+            # Shell includes null and 'shell'
+            query = query.filter(
+                or_(CommandHistory.command_type == 'shell', CommandHistory.command_type == None)
+            )
+        else:
+            query = query.filter(CommandHistory.command_type == command_type)
 
     # Apply search filter
     if search:
@@ -110,6 +123,8 @@ async def list_all_commands(
             execution_time=row.execution_time,
             success=row.success,
             phase=row.phase,
+            command_type=row.command_type or 'shell',
+            source_code=row.source_code,
             created_at=row.created_at,
             assessment_name=row.assessment_name
         )

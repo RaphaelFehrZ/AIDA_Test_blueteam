@@ -227,10 +227,10 @@ async def update_platform_setting(
     if key == "command_history_limit":
         try:
             limit_value = int(request.value)
-            if limit_value < 5 or limit_value > 100:
+            if limit_value < 0 or limit_value > 100:
                 raise fastapi.HTTPException(
                     status_code=400,
-                    detail="Command history limit must be between 5 and 100"
+                    detail="Command history limit must be between 0 and 100"
                 )
         except ValueError:
             raise fastapi.HTTPException(

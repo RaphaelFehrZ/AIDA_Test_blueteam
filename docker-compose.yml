@@ -31,9 +31,9 @@ services:
     env_file:
       - backend/.env
     environment:
-      # Override database host to use Docker service name
-      POSTGRES_HOST: postgres
-      DATABASE_URL: postgresql://${POSTGRES_USER:-aida}:${POSTGRES_PASSWORD:-aida}@postgres:5432/${POSTGRES_DB:-aida_assessments}
+      # DB_HOST is set by switch-db.sh in root .env (default: postgres)
+      POSTGRES_HOST: ${DB_HOST:-postgres}
+      POSTGRES_DB: ${DB_NAME:-aida_assessments}
     ports:
       - "8000:8000"
     volumes:
@@ -86,6 +86,25 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+
+  # AIDA Pentest Container
+  # Lightweight execution environment for AI-driven assessments.
+  # The backend connects to this container via Docker socket (docker exec).
+  aida-pentest:
+    build:
+      context: ./pentest
+      dockerfile: Dockerfile
+    container_name: aida-pentest
+    tty: true
+    stdin_open: true
+    volumes:
+      # Workspace bind mount — same /workspace path as Exegol.
+      # workspace_service.py discovers this path via docker inspect, so the
+      # host path resolution in aida.py continues to work without changes.
+      - ${HOME}/.aida/workspaces:/workspace
+    networks:
+      - aida-network
+    restart: unless-stopped
 
 networks:
   aida-network:

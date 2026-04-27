@@ -36,10 +36,11 @@ export const commandService = {
   /**
    * Get all commands across assessments with pagination (for infinite scroll)
    */
-  getAllCommands: async ({ skip = 0, limit = 50, status = null, search = null }) => {
+  getAllCommands: async ({ skip = 0, limit = 50, status = null, search = null, command_type = null }) => {
     const params = { skip, limit };
     if (status) params.status = status;
     if (search) params.search = search;
+    if (command_type) params.command_type = command_type;
 
     const response = await apiClient.get('/commands', { params });
     return response.data;

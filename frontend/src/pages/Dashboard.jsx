@@ -79,11 +79,16 @@ const Dashboard = () => {
   const [hoveredDay, setHoveredDay] = useState(null);
   const [topTools, setTopTools] = useState([]);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [ctfModeEnabled, setCtfModeEnabled] = useState(false);
 
   const { subscribe } = useWebSocketContext();
 
   useEffect(() => {
     loadDashboardData();
+    // Load global CTF mode setting
+    apiClient.get('/system/settings/ctf_mode_enabled')
+      .then(({ data }) => setCtfModeEnabled(data.value === 'true'))
+      .catch(() => setCtfModeEnabled(false));
   }, []);
 
   // Real-time updates via WebSocket
@@ -388,6 +393,7 @@ const Dashboard = () => {
       {isCreateModalOpen && (
         <CreateAssessmentModal
           onClose={() => setIsCreateModalOpen(false)}
+          ctfModeEnabled={ctfModeEnabled}
           onSuccess={handleCreateAssessment}
         />
       )}

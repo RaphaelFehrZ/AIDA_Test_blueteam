@@ -71,6 +71,9 @@ const Settings = () => {
   const [origSourceZipSizeMB, setOrigSourceZipSizeMB] = useState(200);
   const [savingUploadLimits, setSavingUploadLimits] = useState(false);
   const [uploadLimitsMessage, setUploadLimitsMessage] = useState(null);
+  // CTF mode global toggle
+  const [ctfModeEnabled, setCtfModeEnabled] = useState(false);
+  const [savingCtfMode, setSavingCtfMode] = useState(false);
 
 
   useEffect(() => {
@@ -84,6 +87,7 @@ const Settings = () => {
     loadCommandHistoryLimit();
     loadExegolContainers();
     loadUploadLimits();
+    loadCtfModeSetting();
   }, []);
 
 
@@ -512,6 +516,30 @@ const Settings = () => {
       setTimeout(() => setContainerMessage(null), 5000);
     } finally {
       setSavingContainer(false);
+    }
+  };
+
+  const loadCtfModeSetting = async () => {
+    try {
+      const { data } = await apiClient.get('/system/settings/ctf_mode_enabled');
+      setCtfModeEnabled(data.value === 'true');
+    } catch (error) {
+      setCtfModeEnabled(false);
+    }
+  };
+
+  const handleToggleCtfMode = async () => {
+    const newValue = !ctfModeEnabled;
+    setSavingCtfMode(true);
+    try {
+      await apiClient.put('/system/settings/ctf_mode_enabled', {
+        value: newValue.toString()
+      });
+      setCtfModeEnabled(newValue);
+    } catch (error) {
+      console.error('Failed to save CTF mode setting:', error);
+    } finally {
+      setSavingCtfMode(false);
     }
   };
 
@@ -1064,6 +1092,36 @@ const Settings = () => {
               </div>
             </div>
 
+
+            {/* Features */}
+            <div>
+              <h2 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100 mb-3">Features</h2>
+              <div className="bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-lg divide-y divide-neutral-200 dark:divide-neutral-700">
+                <div className="p-4 flex items-center justify-between">
+                  <div>
+                    <span className="text-sm font-medium text-neutral-900 dark:text-neutral-100">CTF Mode</span>
+                    <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
+                      Enable Capture The Flag features across the platform. Once enabled, CTF mode can be activated per assessment.
+                    </p>
+                  </div>
+                  <button
+                    onClick={handleToggleCtfMode}
+                    disabled={savingCtfMode}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-purple-500 ${
+                      ctfModeEnabled ? 'bg-purple-600' : 'bg-neutral-300 dark:bg-neutral-600'
+                    } ${savingCtfMode ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    role="switch"
+                    aria-checked={ctfModeEnabled}
+                  >
+                    <span
+                      className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                        ctfModeEnabled ? 'translate-x-6' : 'translate-x-1'
+                      }`}
+                    />
+                  </button>
+                </div>
+              </div>
+            </div>
 
             {/* System Info */}
             {systemInfo && (

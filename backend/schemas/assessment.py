@@ -19,7 +19,7 @@ class AssessmentBase(BaseModel):
     credentials: Optional[str] = None
     access_info: Optional[str] = None
     category: Optional[str] = None
-    environment: Optional[str] = "non_specifie"
+    environment: Optional[str] = "non_specified"
     environment_notes: Optional[str] = None
     # Stealth & Evasion
     stealth_profile: Optional[str] = "normal"
@@ -35,6 +35,8 @@ class AssessmentBase(BaseModel):
     extra_nmap_evasion: Optional[str] = None
     nikto_evasion: Optional[str] = None
     nikto_tuning: Optional[str] = None
+    # CTF Mode
+    ctf_mode: Optional[bool] = False
 
 
 class AssessmentCreate(AssessmentBase):
@@ -74,6 +76,8 @@ class AssessmentUpdate(BaseModel):
     extra_nmap_evasion: Optional[str] = None
     nikto_evasion: Optional[str] = None
     nikto_tuning: Optional[str] = None
+    # CTF Mode
+    ctf_mode: Optional[bool] = None
 
 
 class AssessmentResponse(AssessmentBase):
@@ -121,6 +125,7 @@ class AssessmentListResponse(BaseModel):
     extra_nmap_evasion: Optional[str] = None
     nikto_evasion: Optional[str] = None
     nikto_tuning: Optional[str] = None
+    ctf_mode: Optional[bool] = False
     created_at: datetime
     updated_at: datetime
 

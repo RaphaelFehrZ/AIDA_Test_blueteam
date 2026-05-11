@@ -5,6 +5,7 @@ from typing import List, Optional
 from datetime import date, datetime
 from fastapi import APIRouter, Depends, HTTPException, status, Body, UploadFile, File
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy import func
 from pydantic import BaseModel
 
@@ -252,12 +253,6 @@ async def duplicate_assessment(
     # Generate unique name for duplicate
     if options.name and options.name.strip():
         duplicate_name = options.name.strip()
-        # If the provided name already exists, reject it
-        if db.query(Assessment).filter(Assessment.name == duplicate_name).first():
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"An assessment with the name '{duplicate_name}' already exists"
-            )
     else:
         duplicate_name = f"{original.name} (Copy)"
         counter = 1
@@ -265,40 +260,52 @@ async def duplicate_assessment(
             counter += 1
             duplicate_name = f"{original.name} (Copy {counter})"
 
-    # Create duplicate with new workspace
+    # Create duplicate with new workspace, retrying on name conflict (race condition)
     service = AssessmentService(db)
+    max_retries = 3
+    for attempt in range(max_retries):
+        duplicate_data = AssessmentCreate(
+            name=duplicate_name,
+            client_name=original.client_name,
+            scope=original.scope,
+            limitations=original.limitations,
+            start_date=original.start_date,
+            end_date=original.end_date,
+            target_domains=original.target_domains,
+            ip_scopes=original.ip_scopes,
+            credentials=original.credentials,
+            access_info=original.access_info,
+            category=original.category,
+            environment_notes=original.environment_notes,
+            stealth_profile=original.stealth_profile,
+            proxy_config=original.proxy_config,
+            custom_user_agent=original.custom_user_agent,
+            scan_delay=original.scan_delay,
+            max_rate=original.max_rate,
+            decoy_ips=original.decoy_ips,
+            source_port=original.source_port,
+            nmap_timing=original.nmap_timing,
+            fragmentation=original.fragmentation,
+            randomize_hosts=original.randomize_hosts,
+            extra_nmap_evasion=original.extra_nmap_evasion,
+            nikto_evasion=original.nikto_evasion,
+            nikto_tuning=original.nikto_tuning,
+            ctf_mode=original.ctf_mode,
+        )
 
-    # Create duplicate data
-    duplicate_data = AssessmentCreate(
-        name=duplicate_name,
-        client_name=original.client_name,
-        scope=original.scope,
-        limitations=original.limitations,
-        start_date=original.start_date,
-        end_date=original.end_date,
-        target_domains=original.target_domains,
-        ip_scopes=original.ip_scopes,
-        credentials=original.credentials,
-        access_info=original.access_info,
-        category=original.category,
-        environment_notes=original.environment_notes,
-        stealth_profile=original.stealth_profile,
-        proxy_config=original.proxy_config,
-        custom_user_agent=original.custom_user_agent,
-        scan_delay=original.scan_delay,
-        max_rate=original.max_rate,
-        decoy_ips=original.decoy_ips,
-        source_port=original.source_port,
-        nmap_timing=original.nmap_timing,
-        fragmentation=original.fragmentation,
-        randomize_hosts=original.randomize_hosts,
-        extra_nmap_evasion=original.extra_nmap_evasion,
-        nikto_evasion=original.nikto_evasion,
-        nikto_tuning=original.nikto_tuning,
-    )
-
-    # Create assessment with workspace
-    duplicate = await service.create_assessment(duplicate_data)
+        try:
+            duplicate = await service.create_assessment(duplicate_data)
+            break
+        except IntegrityError:
+            db.rollback()
+            if attempt == max_retries - 1:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"An assessment with the name '{duplicate_name}' already exists"
+                )
+            # Append a counter suffix and retry
+            counter = attempt + 2
+            duplicate_name = f"{original.name} (Copy {counter})"
 
     # Set folder to same as original
     if original.folder_id:

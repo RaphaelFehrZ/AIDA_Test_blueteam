@@ -2,12 +2,12 @@ import { useState, useEffect } from 'react';
 import { X, Save } from 'lucide-react';
 import apiClient from '../../services/api';
 
-const EditAssessmentModal = ({ assessment, onClose, onSuccess }) => {
+const EditAssessmentModal = ({ assessment, onClose, onSuccess, ctfModeEnabled }) => {
   const [formData, setFormData] = useState({
     name: '',
     client_name: '',
     category: '',
-    environment: 'non_specifie',
+    environment: 'non_specified',
     start_date: '',
     end_date: '',
     scope: '',
@@ -15,6 +15,7 @@ const EditAssessmentModal = ({ assessment, onClose, onSuccess }) => {
     objectives: '',
     target_domains: '',
     ip_scopes: '',
+    ctf_mode: false,
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -25,7 +26,7 @@ const EditAssessmentModal = ({ assessment, onClose, onSuccess }) => {
         name: assessment.name || '',
         client_name: assessment.client_name || '',
         category: assessment.category || '',
-        environment: assessment.environment || 'non_specifie',
+        environment: assessment.environment || 'non_specified',
         start_date: assessment.start_date || '',
         end_date: assessment.end_date || '',
         scope: assessment.scope || '',
@@ -37,6 +38,7 @@ const EditAssessmentModal = ({ assessment, onClose, onSuccess }) => {
         ip_scopes: Array.isArray(assessment.ip_scopes)
           ? assessment.ip_scopes.join('\n')
           : assessment.ip_scopes || '',
+        ctf_mode: assessment.ctf_mode || false,
       });
     }
   }, [assessment]);
@@ -57,10 +59,12 @@ const EditAssessmentModal = ({ assessment, onClose, onSuccess }) => {
         // Text fields: empty string → null
         client_name: formData.client_name?.trim() || null,
         category: formData.category?.trim() || null,
-        environment: formData.environment || 'non_specifie',
+        environment: formData.environment || 'non_specified',
         scope: formData.scope?.trim() || null,
         limitations: formData.limitations?.trim() || null,
         objectives: formData.objectives?.trim() || null,
+        // CTF
+        ctf_mode: formData.ctf_mode,
         // Arrays
         target_domains: formData.target_domains
           ? formData.target_domains.split('\n').filter(d => d.trim())
@@ -185,7 +189,7 @@ const EditAssessmentModal = ({ assessment, onClose, onSuccess }) => {
                       onChange={(e) => setFormData({ ...formData, environment: e.target.value })}
                       className="input"
                     >
-                      <option value="non_specifie">Non spécifié</option>
+                      <option value="non_specified">Non spécifié</option>
                       <option value="production">Production</option>
                       <option value="dev">Dev</option>
                     </select>
@@ -218,6 +222,33 @@ const EditAssessmentModal = ({ assessment, onClose, onSuccess }) => {
                   </div>
                 </div>
               </div>
+
+              {/* CTF Mode - only visible when enabled in global settings */}
+              {ctfModeEnabled && (
+                <div className="flex items-center justify-between p-3 bg-neutral-50 dark:bg-neutral-700/50 rounded-lg border border-neutral-200 dark:border-neutral-600">
+                  <div>
+                    <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300">
+                      CTF Mode
+                    </label>
+                    <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
+                      Enable Capture The Flag challenge tracking
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setFormData({ ...formData, ctf_mode: !formData.ctf_mode })}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                      formData.ctf_mode ? 'bg-purple-600' : 'bg-neutral-300 dark:bg-neutral-600'
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                        formData.ctf_mode ? 'translate-x-6' : 'translate-x-1'
+                      }`}
+                    />
+                  </button>
+                </div>
+              )}
 
               {/* Target Information */}
               <div>

@@ -5,7 +5,37 @@ import UnifiedModal from '../common/UnifiedModal';
 import CvssCalculator from './CvssCalculator';
 import apiClient from '../../services/api';
 
-const CardsTable = ({ cards, assessmentId, onUpdate, hideAddButton = false, externalTrigger = 0 }) => {
+const CHALLENGE_CATEGORIES = ['web', 'pwn', 'crypto', 'forensics', 'reverse', 'misc', 'osint', 'steganography'];
+const FLAG_STATUSES = ['captured', 'not_captured', 'in_progress'];
+
+const getFlagStatusColor = (status) => {
+  switch (status) {
+    case 'captured':
+      return 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300';
+    case 'in_progress':
+      return 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300';
+    case 'not_captured':
+      return 'bg-neutral-100 dark:bg-neutral-700 text-neutral-600 dark:text-neutral-400';
+    default:
+      return 'bg-neutral-100 dark:bg-neutral-700 text-neutral-600 dark:text-neutral-400';
+  }
+};
+
+const getCategoryColor = (category) => {
+  const colors = {
+    web: 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300',
+    pwn: 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300',
+    crypto: 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300',
+    forensics: 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300',
+    reverse: 'bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300',
+    misc: 'bg-neutral-100 dark:bg-neutral-700 text-neutral-600 dark:text-neutral-400',
+    osint: 'bg-cyan-100 dark:bg-cyan-900/30 text-cyan-700 dark:text-cyan-300',
+    steganography: 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300',
+  };
+  return colors[category] || colors.misc;
+};
+
+const CardsTable = ({ cards, assessmentId, onUpdate, hideAddButton = false, externalTrigger = 0, ctfMode = false }) => {
   const [expandedCards, setExpandedCards] = useState(new Set());
 
   // Modal state for Add/Edit
@@ -25,6 +55,11 @@ const CardsTable = ({ cards, assessmentId, onUpdate, hideAddButton = false, exte
     cvss_vector: null,
     cvss_score: null,
     cvss_mode: 'cvss',  // 'cvss' | 'manual'
+    // CTF fields
+    flag: '',
+    flag_status: 'not_captured',
+    points: '',
+    challenge_category: 'web',
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -46,6 +81,8 @@ const CardsTable = ({ cards, assessmentId, onUpdate, hideAddButton = false, exte
         return <Eye className="w-4 h-4" />;
       case 'info':
         return <Info className="w-4 h-4" />;
+      case 'challenge':
+        return <span className="w-4 h-4 inline-flex items-center justify-center text-xs">&#9873;</span>;
       default:
         return <AlertTriangle className="w-4 h-4" />;
     }
@@ -59,6 +96,8 @@ const CardsTable = ({ cards, assessmentId, onUpdate, hideAddButton = false, exte
         return 'text-blue-600 dark:text-blue-400';
       case 'info':
         return 'text-green-600 dark:text-green-400';
+      case 'challenge':
+        return 'text-purple-600 dark:text-purple-400';
       default:
         return 'text-neutral-600 dark:text-neutral-400';
     }
@@ -81,6 +120,10 @@ const CardsTable = ({ cards, assessmentId, onUpdate, hideAddButton = false, exte
       cvss_vector: null,
       cvss_score: null,
       cvss_mode: 'cvss',
+      flag: '',
+      flag_status: 'not_captured',
+      points: '',
+      challenge_category: 'web',
     });
     setShowModal(true);
   };
@@ -107,6 +150,10 @@ const CardsTable = ({ cards, assessmentId, onUpdate, hideAddButton = false, exte
       cvss_vector: card.cvss_vector || null,
       cvss_score: card.cvss_score || null,
       cvss_mode: card.cvss_vector ? 'cvss' : 'manual',
+      flag: card.flag || '',
+      flag_status: card.flag_status || 'not_captured',
+      points: card.points ?? '',
+      challenge_category: card.challenge_category || 'web',
     });
     setShowModal(true);
   };
@@ -122,6 +169,7 @@ const CardsTable = ({ cards, assessmentId, onUpdate, hideAddButton = false, exte
       setIsSubmitting(true);
 
       const isFinding = formData.card_type === 'finding';
+      const isChallenge = formData.card_type === 'challenge';
       const useCvss = isFinding && formData.cvss_mode === 'cvss' && formData.cvss_vector;
 
       const payload = {
@@ -129,7 +177,7 @@ const CardsTable = ({ cards, assessmentId, onUpdate, hideAddButton = false, exte
         title: formData.title.trim(),
         target_service: formData.target_service || null,
         severity: isFinding ? formData.severity : null,
-        status: formData.status || null,
+        status: isChallenge ? null : (formData.status || null),
         section_number: formData.section_number || null,
         technical_analysis: formData.technical_analysis || null,
         proof: formData.proof || null,
@@ -137,6 +185,11 @@ const CardsTable = ({ cards, assessmentId, onUpdate, hideAddButton = false, exte
         context: formData.context || null,
         cvss_vector: useCvss ? formData.cvss_vector : null,
         cvss_score: useCvss ? formData.cvss_score : null,
+        // CTF fields
+        flag: isChallenge ? (formData.flag || null) : null,
+        flag_status: isChallenge ? (formData.flag_status || 'not_captured') : null,
+        points: isChallenge ? (formData.points ? parseInt(formData.points, 10) : null) : null,
+        challenge_category: isChallenge ? (formData.challenge_category || null) : null,
       };
 
       if (editingCard) {
@@ -254,6 +307,27 @@ const CardsTable = ({ cards, assessmentId, onUpdate, hideAddButton = false, exte
                       )
                     )}
 
+                    {/* Challenge badges */}
+                    {cardType === 'challenge' && (
+                      <>
+                        {card.challenge_category && (
+                          <span className={`px-2 py-0.5 text-xs font-medium rounded ${getCategoryColor(card.challenge_category)}`}>
+                            {card.challenge_category}
+                          </span>
+                        )}
+                        {card.points != null && (
+                          <span className="px-2 py-0.5 text-xs font-mono font-medium rounded bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300">
+                            {card.points} pts
+                          </span>
+                        )}
+                        {card.flag_status && (
+                          <span className={`px-2 py-0.5 text-xs font-medium rounded ${getFlagStatusColor(card.flag_status)}`}>
+                            {card.flag_status.replace('_', ' ')}
+                          </span>
+                        )}
+                      </>
+                    )}
+
                     {/* Card Type */}
                     <span className="text-sm font-medium text-neutral-600 dark:text-neutral-300 capitalize">
                       {cardType}
@@ -352,6 +426,43 @@ const CardsTable = ({ cards, assessmentId, onUpdate, hideAddButton = false, exte
                       </div>
                     )}
 
+                    {/* Challenge Details */}
+                    {card.card_type === 'challenge' && (
+                      <div>
+                        <h4 className="text-sm font-semibold text-neutral-700 dark:text-neutral-300 mb-2">Challenge Details</h4>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 bg-white dark:bg-neutral-800 p-3 rounded border border-neutral-200 dark:border-neutral-700">
+                          {card.challenge_category && (
+                            <div>
+                              <span className="text-xs text-neutral-500 dark:text-neutral-400">Category</span>
+                              <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100 capitalize">{card.challenge_category}</p>
+                            </div>
+                          )}
+                          {card.points != null && (
+                            <div>
+                              <span className="text-xs text-neutral-500 dark:text-neutral-400">Points</span>
+                              <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">{card.points}</p>
+                            </div>
+                          )}
+                          {card.flag_status && (
+                            <div>
+                              <span className="text-xs text-neutral-500 dark:text-neutral-400">Status</span>
+                              <p className={`text-sm font-medium capitalize ${
+                                card.flag_status === 'captured' ? 'text-green-600 dark:text-green-400' :
+                                card.flag_status === 'in_progress' ? 'text-yellow-600 dark:text-yellow-400' :
+                                'text-neutral-600 dark:text-neutral-400'
+                              }`}>{card.flag_status.replace('_', ' ')}</p>
+                            </div>
+                          )}
+                          {card.flag && card.flag_status === 'captured' && (
+                            <div>
+                              <span className="text-xs text-neutral-500 dark:text-neutral-400">Flag</span>
+                              <p className="text-sm font-mono font-medium text-green-600 dark:text-green-400 break-all">{card.flag}</p>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
                     {/* Status (for all card types) */}
                     {card.status && (
                       <div>
@@ -428,6 +539,7 @@ const CardsTable = ({ cards, assessmentId, onUpdate, hideAddButton = false, exte
               <option value="finding">Finding</option>
               <option value="observation">Observation</option>
               <option value="info">Info</option>
+              {ctfMode && <option value="challenge">Challenge</option>}
             </select>
           </div>
 
@@ -545,8 +657,76 @@ const CardsTable = ({ cards, assessmentId, onUpdate, hideAddButton = false, exte
             </div>
           )}
 
+          {/* CTF Challenge fields */}
+          {formData.card_type === 'challenge' && (
+            <div className="space-y-4 p-4 bg-purple-50 dark:bg-purple-900/10 border border-purple-200 dark:border-purple-800 rounded-lg">
+              <h4 className="text-sm font-semibold text-purple-700 dark:text-purple-300">Challenge Details</h4>
+
+              {/* Challenge Category */}
+              <div>
+                <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1">
+                  Category
+                </label>
+                <select
+                  value={formData.challenge_category}
+                  onChange={(e) => setFormData({ ...formData, challenge_category: e.target.value })}
+                  className="w-full px-3 py-2 border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 rounded-lg text-sm focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                >
+                  {CHALLENGE_CATEGORIES.map(cat => (
+                    <option key={cat} value={cat}>{cat.charAt(0).toUpperCase() + cat.slice(1)}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Points */}
+              <div>
+                <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1">
+                  Points
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  value={formData.points}
+                  onChange={(e) => setFormData({ ...formData, points: e.target.value })}
+                  placeholder="100"
+                  className="w-full px-3 py-2 border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 rounded-lg text-sm focus:ring-2 focus:ring-purple-500 focus:border-transparent placeholder:text-neutral-400 dark:placeholder:text-neutral-500"
+                />
+              </div>
+
+              {/* Flag */}
+              <div>
+                <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1">
+                  Flag
+                </label>
+                <input
+                  type="text"
+                  value={formData.flag}
+                  onChange={(e) => setFormData({ ...formData, flag: e.target.value })}
+                  placeholder="flag{...}"
+                  className="w-full px-3 py-2 border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 rounded-lg text-sm font-mono focus:ring-2 focus:ring-purple-500 focus:border-transparent placeholder:text-neutral-400 dark:placeholder:text-neutral-500"
+                />
+              </div>
+
+              {/* Flag Status */}
+              <div>
+                <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1">
+                  Flag Status
+                </label>
+                <select
+                  value={formData.flag_status}
+                  onChange={(e) => setFormData({ ...formData, flag_status: e.target.value })}
+                  className="w-full px-3 py-2 border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 rounded-lg text-sm focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                >
+                  <option value="not_captured">Not Captured</option>
+                  <option value="in_progress">In Progress</option>
+                  <option value="captured">Captured</option>
+                </select>
+              </div>
+            </div>
+          )}
+
           {/* Mark as False Positive (for observations and info) */}
-          {formData.card_type !== 'finding' && (
+          {formData.card_type !== 'finding' && formData.card_type !== 'challenge' && (
             <div>
               <label className="flex items-center gap-2 text-sm text-neutral-700 dark:text-neutral-300 cursor-pointer">
                 <input
@@ -593,7 +773,7 @@ const CardsTable = ({ cards, assessmentId, onUpdate, hideAddButton = false, exte
           {/* Proof */}
           <div>
             <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1">
-              Proof / Evidence
+              {formData.card_type === 'challenge' ? 'Proof / Writeup' : 'Proof / Evidence'}
             </label>
             <textarea
               value={formData.proof}

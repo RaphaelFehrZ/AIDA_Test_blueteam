@@ -2,9 +2,12 @@
 MCP Tool Handlers - Refactored handlers for all MCP tools
 Handles: load_assessment, add_*, list_*, update_*, execute, pentesting tools
 """
+import logging
 from typing import List, Optional, Tuple
 from mcp.types import TextContent
 from scan_parsers import parse_scan_output
+
+_log = logging.getLogger("aida-mcp")
 
 
 def _calculate_cvss4_score(vector: str) -> Tuple[Optional[float], Optional[str]]:
@@ -19,8 +22,8 @@ def _calculate_cvss4_score(vector: str) -> Tuple[Optional[float], Optional[str]]
         score = float(c.base_score)
         severity = _score_to_severity(score)
         return score, severity
-    except Exception:
-        pass
+    except Exception as e:
+        _log.debug("CVSS4 score calculation failed for vector %s: %s", vector, e)
     return None, None
 
 
@@ -162,7 +165,7 @@ async def _handle_load_assessment(arguments: dict, mcp_service) -> List[TextCont
     response = f"**Assessment Loaded: {assessment_data['name']}**\n\n"
     response += "## State of Work\n"
     response += f"**Client:** {assessment_data.get('client_name', 'N/A')}\n"
-    response += f"**Environment:** {assessment_data.get('environment', 'non_specifie')}\n"
+    response += f"**Environment:** {assessment_data.get('environment', 'non_specified')}\n"
     response += f"**Scope:** {assessment_data.get('scope', 'N/A')}\n"
     response += f"**Limitations:** {assessment_data.get('limitations', 'N/A')}\n\n"
 
@@ -320,8 +323,7 @@ async def _handle_load_assessment(arguments: dict, mcp_service) -> List[TextCont
                 status = "ERR" if cmd.get('stderr') else "OK"
                 response += f"- `{cmd.get('command', 'N/A')}` [{status}]\n"
     except Exception as e:
-        # Continue without commands
-        pass
+        _log.warning("Failed to load recent commands: %s", e)
 
     # Add credentials (placeholders + metadata, no raw secrets)
     try:
@@ -367,8 +369,8 @@ async def _handle_load_assessment(arguments: dict, mcp_service) -> List[TextCont
                         response += f"  Data: {cred['custom_data']}\n"
         else:
             response += "\n## Credentials\nNo credentials configured yet. Use `credentials_add` to add tokens, cookies, etc.\n"
-    except Exception:
-        pass
+    except Exception as e:
+        _log.warning("Failed to load credentials: %s", e)
 
     response += "\nReady to begin assessment work!"
 
@@ -561,7 +563,8 @@ async def _handle_add_card(arguments: dict, mcp_service) -> List[TextContent]:
     # Add all optional fields if provided (don't filter by type - backend accepts all)
     optional_fields = [
         "target_service", "severity", "status",
-        "technical_analysis", "proof", "notes", "context"
+        "technical_analysis", "proof", "notes", "context",
+        "flag", "flag_status", "points", "challenge_category"
     ]
     for field in optional_fields:
         if field in arguments and arguments[field] is not None:
@@ -610,6 +613,14 @@ async def _handle_add_card(arguments: dict, mcp_service) -> List[TextContent]:
         return [TextContent(
             type="text",
             text=f"Observation added: {title} [ID: {card_id}]"
+        )]
+    elif card_type == "challenge":
+        pts = card_data.get("points", "?")
+        cat = card_data.get("challenge_category", "misc")
+        flag_st = card_data.get("flag_status", "not_captured")
+        return [TextContent(
+            type="text",
+            text=f"Challenge added: {title} [{cat}] ({pts} pts, {flag_st}) [ID: {card_id}]"
         )]
     else:  # info
         return [TextContent(
@@ -892,12 +903,12 @@ async def _handle_execute(arguments: dict, mcp_service) -> List[TextContent]:
             )
             if timeout_response.status_code == 200:
                 timeout_seconds = timeout_response.json().get("timeout_seconds", 300)
-        except:
-            pass
-        
+        except Exception as e:
+            _log.warning("Failed to fetch command timeout settings, using default %ds: %s", timeout_seconds, e)
+
         poll_interval = 2  # Poll every 2 seconds
         pending_id = None
-        
+
         # Create pending command
         try:
             pending_response = await mcp_service.http_client.post(
@@ -970,11 +981,10 @@ async def _handle_execute(arguments: dict, mcp_service) -> List[TextContent]:
                         break
                     
                     # Still pending - continue polling
-                    
+
             except Exception as e:
-                # Continue polling on error
-                pass
-        
+                _log.warning("Polling error for pending command %s: %s", pending_id, e)
+
         # ========== RETURN RESULT BASED ON FINAL STATUS ==========
         if final_status == "approved" and execution_result:
             # Command was approved and executed - return output like normal execution
@@ -1122,8 +1132,8 @@ async def _handle_python_exec(arguments: dict, mcp_service) -> List[TextContent]
             )
             if timeout_response.status_code == 200:
                 timeout_seconds = timeout_response.json().get("timeout_seconds", 300)
-        except Exception:
-            pass
+        except Exception as e:
+            _log.warning("Failed to fetch command timeout settings for python_exec, using default %ds: %s", timeout_seconds, e)
 
         poll_interval = 2
         pending_id = None
@@ -1176,8 +1186,8 @@ async def _handle_python_exec(arguments: dict, mcp_service) -> List[TextContent]
                     elif current_status in ("rejected", "timeout"):
                         final_status = current_status
                         break
-            except Exception:
-                pass
+            except Exception as e:
+                _log.warning("Polling error for pending python_exec %s: %s", pending_id, e)
 
         if final_status == "approved" and execution_result:
             max_length = await mcp_service.get_python_exec_output_max_length()
@@ -1326,8 +1336,8 @@ async def _handle_http_request(arguments: dict, mcp_service) -> List[TextContent
             )
             if timeout_response.status_code == 200:
                 timeout_seconds = timeout_response.json().get("timeout_seconds", 300)
-        except Exception:
-            pass
+        except Exception as e:
+            _log.warning("Failed to fetch command timeout settings for http_request, using default %ds: %s", timeout_seconds, e)
 
         poll_interval = 2
         pending_id = None
@@ -1380,8 +1390,8 @@ async def _handle_http_request(arguments: dict, mcp_service) -> List[TextContent
                     elif current_status in ("rejected", "timeout"):
                         final_status = current_status
                         break
-            except Exception:
-                pass
+            except Exception as e:
+                _log.warning("Polling error for pending http_request %s: %s", pending_id, e)
 
         if final_status == "approved" and execution_result:
             max_length = await mcp_service.get_http_request_output_max_length()

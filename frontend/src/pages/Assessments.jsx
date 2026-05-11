@@ -25,6 +25,7 @@ const Assessments = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [activeView, setActiveView] = useState('active'); // 'active', 'completed', 'archived', or folder ID
   const [actionLoading, setActionLoading] = useState(false);
+  const [ctfModeEnabled, setCtfModeEnabled] = useState(false);
   const searchInputRef = useRef(null);
 
   // WebSocket for real-time updates
@@ -32,6 +33,10 @@ const Assessments = () => {
 
   useEffect(() => {
     loadData();
+    // Load global CTF mode setting
+    apiClient.get('/system/settings/ctf_mode_enabled')
+      .then(({ data }) => setCtfModeEnabled(data.value === 'true'))
+      .catch(() => setCtfModeEnabled(false));
   }, []);
 
   // Subscribe to WebSocket events for real-time updates
@@ -313,6 +318,7 @@ const Assessments = () => {
         {isCreateModalOpen && (
           <CreateAssessmentModal
             onClose={() => setIsCreateModalOpen(false)}
+            ctfModeEnabled={ctfModeEnabled}
             onSuccess={async () => {
               setIsCreateModalOpen(false);
               // Reload all assessments for accurate counting
@@ -336,6 +342,7 @@ const Assessments = () => {
         {isEditAssessmentModalOpen && editingAssessment && (
           <EditAssessmentModal
             assessment={editingAssessment}
+            ctfModeEnabled={ctfModeEnabled}
             onClose={() => {
               setIsEditAssessmentModalOpen(false);
               setEditingAssessment(null);

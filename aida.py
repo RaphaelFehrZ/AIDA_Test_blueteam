@@ -4,6 +4,7 @@ AIDA CLI Launcher - Professional Python Implementation
 AI-Driven Security Assessment - Intelligent wrapper for Claude Code & Kimi CLI
 """
 import os
+import re
 import sys
 import json
 import subprocess
@@ -101,6 +102,29 @@ DEFAULT_BACKEND = "http://localhost:8000/api"
 
 # CLI types
 CLIType = Literal["claude", "kimi"]
+
+
+_INCLUDE_RE = re.compile(r"\{\{\s*INCLUDE:\s*([^}\s]+)\s*\}\}")
+
+
+def resolve_includes(content: str, base_dir: Path, _depth: int = 0) -> str:
+    """Resolve {{INCLUDE: relative/path}} markers in the prompt content.
+
+    Paths are resolved relative to base_dir. Nested includes are supported up
+    to depth 5 to prevent runaway recursion.
+    """
+    if _depth > 5:
+        raise RuntimeError("Include depth exceeded (>5) — possible cycle in preprompt includes")
+
+    def _sub(match: re.Match) -> str:
+        rel = match.group(1).strip()
+        target = (base_dir / rel).resolve()
+        if not target.is_file():
+            raise FileNotFoundError(f"Preprompt include not found: {rel} (resolved to {target})")
+        included = target.read_text()
+        return resolve_includes(included, target.parent, _depth + 1)
+
+    return _INCLUDE_RE.sub(_sub, content)
 
 
 def ensure_backend_venv(quiet=False) -> Path:
@@ -518,6 +542,7 @@ def main(assessment, model, permission_mode, preprompt, base_url, api_key, no_mc
         
         try:
             preprompt_content = custom_preprompt_path.read_text()
+            preprompt_content = resolve_includes(preprompt_content, custom_preprompt_path.parent)
             if not quiet:
                 console.print(f"[green]✓ Using custom preprompt:[/green] [cyan]{custom_preprompt_path.name}[/cyan]")
                 console.print(f"[dim]  Path: {custom_preprompt_path}[/dim]\n")
@@ -533,6 +558,7 @@ def main(assessment, model, permission_mode, preprompt, base_url, api_key, no_mc
         
         try:
             preprompt_content = PREPROMPT_FILE.read_text()
+            preprompt_content = resolve_includes(preprompt_content, PREPROMPT_FILE.parent)
             if not quiet and debug:
                 console.print(f"[dim]✓ Using default preprompt: {PREPROMPT_FILE.name}[/dim]\n")
         except Exception as e:

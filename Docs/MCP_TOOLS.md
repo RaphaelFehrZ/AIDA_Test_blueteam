@@ -8,11 +8,85 @@ Complete reference for all MCP tools available to AI clients.
 
 AIDA exposes tools through the Model Context Protocol (MCP). These tools give AI assistants the ability to:
 
-- Execute commands in Exegol containers
+- Execute commands in the pentesting container
 - Document findings and observations
 - Track reconnaissance data
 - Manage credentials
 - Run specialized security scans
+
+---
+
+## Transport: stdio vs HTTP
+
+AIDA ships two transports. stdio is the default and spawns the MCP server as a local subprocess. HTTP (Streamable HTTP, spec 2025-11-25) is optional and lets remote clients connect with a Bearer API key.
+
+### stdio (default)
+
+```bash
+python3 aida.py --assessment "my-target"
+```
+
+Generates `.aida/mcp-config.json` pointing at the backend venv's Python. No network exposure — the AI client and MCP server share stdin/stdout.
+
+### HTTP (optional, remote-capable)
+
+1. Open AIDA → Settings → **MCP Access**.
+2. Toggle **Enable HTTP MCP transport**.
+3. Pick a network policy (localhost / LAN / any). LAN and Any require `BACKEND_BIND_HOST=0.0.0.0` in `.env` and a backend restart.
+4. Click **Create API key**, copy the value shown once.
+5. Paste the generated snippet into your MCP client's config. For Claude Code:
+
+The endpoint is reachable at three URLs depending on how AIDA was started:
+
+| Mode | URL |
+|------|-----|
+| Local (default) | `http://localhost:31337/mcp` (via Nginx) or `http://localhost:8000/mcp` (direct backend) |
+| `--lan` | `https://<LAN_IP>/mcp` (via Caddy) |
+| `--domain example.com` | `https://example.com/mcp` (via Caddy + Let's Encrypt) |
+
+```bash
+# Local
+claude mcp add --transport http aida http://localhost:8000/mcp \
+  --header "Authorization: Bearer aida_sk_..."
+
+# LAN — use the LAN IP shown by ./start.sh --lan
+claude mcp add --transport http aida https://192.168.1.42/mcp \
+  --header "Authorization: Bearer aida_sk_..."
+
+# Public domain
+claude mcp add --transport http aida https://aida.example.com/mcp \
+  --header "Authorization: Bearer aida_sk_..."
+```
+
+In a client's `mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "aida": {
+      "url": "https://aida.example.com/mcp",
+      "headers": { "Authorization": "Bearer aida_sk_..." }
+    }
+  }
+}
+```
+
+The CLI launcher can emit the HTTP config for you:
+
+```bash
+python3 aida.py --http http://localhost:8000/mcp --mcp-api-key aida_sk_...
+```
+
+### Security
+
+- **Default off.** The `/mcp` route returns 503 until an admin enables it.
+- **Keys are bcrypt-hashed** at rest; the plaintext is shown exactly once on creation.
+- **Revocation is instant** via the Settings UI.
+- **Network policy** is enforced at the application layer even when the socket binds to 0.0.0.0.
+- **TLS is optional and mode-driven.** In `./start.sh --lan` and `./start.sh --domain` modes,
+  Caddy fronts the backend and the MCP endpoint is also reachable at
+  `https://<host>/mcp`. In default local mode there is no TLS — `http://localhost:8000/mcp`
+  is fine because the traffic stays on your machine. See [`TLS.md`](TLS.md).
 
 ---
 
@@ -249,7 +323,7 @@ Three tools allow code execution inside the Exegol container. Each has its own i
 
 ### `execute`
 
-Execute any shell command in the Exegol container.
+Execute any shell command in the pentesting container.
 
 **Examples:**
 
@@ -281,7 +355,7 @@ execute(command="sqlmap -u 'https://target.com/api?id=1' --dbs --batch")
 
 ### `python_exec`
 
-Execute Python code directly inside the Exegol container via stdin, without shell escaping issues.
+Execute Python code directly inside the pentesting container via stdin, without shell escaping issues.
 
 **Examples:**
 
@@ -310,7 +384,7 @@ print(r.status_code, r.text[:500])
 
 **Notes:**
 - Code is passed via stdin — no shell escaping needed
-- All tools installed in Exegol are available (requests, scapy, impacket, etc.)
+- All tools installed in the pentesting container are available (requests, scapy, impacket, etc.)
 - Output is truncated to the `python_exec` output max length setting
 - Credential placeholders (`{{TOKEN}}`) are auto-substituted in the code
 
@@ -318,7 +392,7 @@ print(r.status_code, r.text[:500])
 
 ### `http_request`
 
-Make HTTP requests directly from the Exegol container. Useful for testing endpoints that require specific network routing, proxies, or certificates.
+Make HTTP requests directly from the pentesting container. Useful for testing endpoints that require specific network routing, proxies, or certificates.
 
 **Parameters:**
 
@@ -372,7 +446,7 @@ http_request(
 - Response time
 
 **Notes:**
-- Requests are made from within the Exegol container (internal network access)
+- Requests are made from within the pentesting container (internal network access)
 - Credential placeholders (`{{TOKEN}}`) are auto-substituted in headers and body
 - Commands may require approval based on settings
 

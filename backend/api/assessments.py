@@ -82,7 +82,7 @@ async def list_assessments(
         valid_statuses = {'active', 'completed', 'archived', 'draft'}
         if status not in valid_statuses:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
+                status_code=400,
                 detail=f"Invalid status value. Allowed: {', '.join(sorted(valid_statuses))}"
             )
         query = query.filter(Assessment.status == status)

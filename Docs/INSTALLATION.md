@@ -1,69 +1,54 @@
 # AIDA Installation Guide
 
-Get AIDA running in 5 minutes.
+Get AIDA running in under a minute.
 
 ---
 
 ## Prerequisites
 
-Before we start, make sure you have:
-
 | Requirement | Version | Check |
 |-------------|---------|-------|
 | **Docker Desktop** | Latest | `docker --version` |
-| **Python** | 3.10+ | `python3 --version` |
-| **Node.js** | 18+ | `node --version` |
-| **Git** | Any | `git --version` |
 
-Also needed:
+Also needed for AI integration:
+- **Python** 3.10+ (`python3 --version`) — for the MCP server and CLI
 - **An AI client** that supports MCP — Claude Code or Kimi CLI recommended (see Step 5)
 
-> **Exegol users:** AIDA supports Exegol as an alternative container. You will be asked at first launch.
+> **Exegol users:** AIDA uses `aida-pentest` by default. You can switch to Exegol anytime in Settings.
 
 ---
 
 ## Platform Setup
 
-### Step 1: Clone the Repository
+### Step 1: Clone & Start
 
 ```bash
 git clone https://github.com/Vasco0x4/AIDA.git
 cd AIDA
-```
-
-### Step 2: Start the Platform
-
-The easiest way - Docker Compose handles everything:
-
-```bash
 ./start.sh
 ```
 
-**On first run**, you will be asked to choose your pentesting container:
+Open **http://localhost:31337** — local mode (Nginx, plain HTTP) by default.
 
-```
-  [1] aida-pentest
-      Built-in, managed by AIDA — starts automatically with ./start.sh
-      Size: ~2 GB  |  Tools: nmap, ffuf, gobuster, sqlmap, nikto...
-
-  [2] Exegol
-      Third-party container — requires separate install: https://docs.exegol.com
-      Size: ~20-40 GB  |  Tools: ~400+ security tools
-```
-
-Both options are fully supported. Press Enter or `1` for `aida-pentest` (default). If you're already an Exegol user, select `2` to keep using it. You can switch between them anytime in Settings.
+The backend image is pulled from Docker Hub. The frontend (Nginx) is always built locally so that `VITE_API_URL=/api` is correctly baked in at compile time.
 
 This starts:
-- **PostgreSQL** on port `5432` - The database
-- **Backend API** on port `8000` - FastAPI server
-- **Frontend** on port `5173` - React dashboard
-- **aida-pentest** - Pentesting container (if selected above)
+- **PostgreSQL** on port `5432` - The database (localhost only)
+- **Backend API** on port `8000` - FastAPI server (localhost only)
+- **Frontend (Nginx)** on port `31337` - Web dashboard
+- **aida-pentest** - Built-in pentesting container (~2 GB)
 
-### Step 3: Verify It Works
+> **Sharing on a network or deploying with a domain?** See [`TLS.md`](TLS.md)
+> for `./start.sh --lan` (HTTPS over your LAN) and `./start.sh --domain`
+> (HTTPS with Let's Encrypt).
 
-Open your browser to [http://localhost:5173](http://localhost:5173)
+### Step 3: First-Run Setup
 
-You should see the AIDA dashboard.
+Open your browser to [http://localhost:31337](http://localhost:31337)
+
+On the very first launch, AIDA shows a **setup wizard** to create the initial admin account. Pick a username and password — these are the credentials you'll use everywhere (web UI, CLI, MCP). Once submitted, you land on the dashboard.
+
+> **Lost your password?** See [`Docs/RESET_PASSWORD.md`](RESET_PASSWORD.md).
 
 ---
 
@@ -108,16 +93,27 @@ Now you need to hook up AIDA to your AI assistant via MCP.
 |-----------|----------------|--------------|
 | **Claude Code** | Recommended | Use `aida.py` CLI (automatic) |
 | **Kimi CLI** | Recommended | Use `aida.py` CLI (automatic) |
+| **Qwen Code CLI** | Recommended | Use `aida.py --cli qwen` (automatic) |
 | **Vertex AI / External API** | Recommended | Use `aida.py` with flags |
-| **Antigravity** | Works | Manual MCP import |
-| **Gemini CLI** | Works | Manual MCP import |
-| **Claude Desktop** | Works | Manual MCP import |
+| **Antigravity** | Works | Manual MCP import (run `aida.py` once first) |
+| **Gemini CLI** | Works | Manual MCP import (run `aida.py` once first) |
+| **Claude Desktop** | Works | Manual MCP import (run `aida.py` once first) |
+
+> **External MCP clients (Claude Desktop, Cursor, Gemini CLI, etc.)** require running `aida.py` once before connecting. This authenticates against the backend and stores a long-lived API key in `.aida/api-key`. Every subsequent connection reuses it silently — no further login needed.
 
 ---
 
 ## AIDA CLI — Claude Code & Kimi
 
-The `aida.py` CLI is the recommended way to launch AIDA. It **auto-detects** which AI client you have installed (Claude Code or Kimi CLI) and configures everything automatically — MCP server, workspace, preprompt.
+The `aida.py` CLI is the recommended way to launch AIDA. It **auto-detects** which AI client you have installed (Claude Code, Kimi CLI, or Qwen Code) and configures everything automatically — MCP server, workspace, preprompt, and authentication.
+
+### Authentication (First Launch)
+
+The first time you run `aida.py`, it prompts for your AIDA credentials (the ones you created in the setup wizard) and stores a **long-lived API key** in `.aida/api-key` (`chmod 600`, valid 1 year). Every subsequent launch reuses this key silently — no more prompts.
+
+The same key is used by the MCP server to authenticate against the backend, so it works for both the launcher and AI tool calls. To force a re-login, delete `.aida/api-key`.
+
+For non-interactive use (CI, scripts), set `AIDA_TOKEN` in the environment to bypass the prompt entirely.
 
 ### Common Options
 
@@ -242,15 +238,18 @@ Same benefits as Claude Code, but routing through your own API endpoint.
 
 For Antigravity, Gemini CLI, Claude Desktop, or ChatGPT, you need to manually configure the MCP server.
 
+> ⚠️ **Authentication first** — The MCP server reads its API key from `.aida/api-key`, which is created the first time you run `aida.py`. **Run `python3 aida.py` once before starting your external client**, log in when prompted, and you can `Ctrl+C` immediately after — the key is now cached and any external MCP client will use it.
+
 **The process:**
 
-1. Import the MCP server config (see examples below)
-2. Copy the preprompt from `Docs/PrePrompt.txt`
-3. Paste it into your AI client when starting an assessment
+1. Run `python3 aida.py` once to log in and generate `.aida/api-key`
+2. Import the MCP server config (see examples below)
+3. Copy the preprompt from `Docs/PrePrompt.txt`
+4. Paste it into your AI client when starting an assessment
 
 > Antigravity works great if you select Claude. Gemini is OK. Any MCP-compatible client should work.
 >
-> **Prefer Claude Code or Kimi?** Use `aida.py` instead — it handles all of this automatically.
+> **Prefer Claude Code, Kimi, or Qwen?** Use `aida.py` instead — it handles all of this automatically.
 
 ### Config Paths
 
@@ -298,16 +297,122 @@ Run through this checklist:
 
 | Check | How | Expected |
 |-------|-----|----------|
-| Platform running | http://localhost:5173 | Dashboard loads |
+| Platform running | http://localhost:31337 | Dashboard loads |
 | API healthy | http://localhost:8000/health | `{"status": "healthy"}` |
 | Database connected | Check backend logs | No connection errors |
 | Pentest container | `docker ps \| grep aida-pentest` or `docker ps \| grep exegol` | Container running |
 | MCP server | Check AI client | AIDA tools visible |
 
 
+## Platform Scripts
+
+One script, three modes:
+
+| Command | Description |
+|---------|-------------|
+| `./start.sh` | Local — `http://localhost:31337`, no TLS (default) |
+| `./start.sh --lan` | LAN — `https://<LAN_IP>`, Caddy + self-signed cert |
+| `./start.sh --domain X.Y` | Public — `https://X.Y`, Caddy + Let's Encrypt |
+| `./start.sh --dev` | Dev — `http://localhost:5173`, Vite hot reload |
+| `./stop.sh` | Stop all services — data is preserved |
+| `./restart.sh` | Restart all services and wait for health checks |
+
+Switching between modes is safe — `start.sh` tears down the old stack first
+and your Postgres data volume is never touched.
+
+```bash
+# Local-only (default)
+./start.sh
+
+# Share on your network (HTTPS with self-signed cert)
+./start.sh --lan
+
+# Deploy with a real domain (Let's Encrypt)
+./start.sh --domain aida.example.com --email admin@example.com
+
+# Development (Vite hot reload)
+./start.sh --dev
+
+# Stop / restart
+./stop.sh
+./restart.sh
+```
+
+> Full TLS reference → [`TLS.md`](TLS.md)
+
+---
+
 ## Troubleshooting
 
-TODO
+### "Backend not reachable" in the web UI (default `./start.sh`)
+
+This means the frontend loaded but can't reach the API. In default mode, Nginx proxies `/api` requests to the backend container over Docker's internal network. If that path is broken, the UI shows this banner even though the backend is running.
+
+**Step 1 — Check the backend is actually healthy:**
+```bash
+curl http://localhost:8000/health
+# Expected: {"status":"healthy"}
+```
+
+**Step 2 — Check Nginx can reach the backend:**
+```bash
+docker logs aida_frontend --tail 20
+# Look for "connect() failed" or "no live upstreams" — confirms a network issue
+```
+
+**Step 3 — Ubuntu: check Docker bridge networking (most common cause)**
+
+On Ubuntu, `ufw` with `DEFAULT_FORWARD_POLICY=DROP` blocks Docker's inter-container traffic. This only affects prod mode (which uses Nginx as a proxy between containers) — dev mode works because the browser hits `localhost:8000` directly.
+
+Check the current policy:
+```bash
+sudo grep DEFAULT_FORWARD_POLICY /etc/default/ufw
+```
+
+If it says `DROP`, fix it:
+```bash
+sudo sed -i 's/DEFAULT_FORWARD_POLICY="DROP"/DEFAULT_FORWARD_POLICY="ACCEPT"/' /etc/default/ufw
+sudo ufw reload
+```
+
+Then restart the stack:
+```bash
+./stop.sh && ./start.sh
+```
+
+> **Why does `--dev` work but default mode doesn't?**  
+> In dev mode, `VITE_API_URL=http://localhost:8000/api` — the browser calls the backend directly via the published host port. No Docker networking is needed. In default mode, Nginx (in the frontend container) must route to the backend container over `aida-network`. If the Docker bridge forward policy is `DROP`, that intra-container traffic is blocked.
+
+**Step 4 — Verify containers are on the same network:**
+```bash
+docker network inspect aida-network --format '{{range .Containers}}{{.Name}} {{end}}'
+# Should list: aida_backend aida_frontend aida_postgres aida_docker_proxy
+```
+
+---
+
+### Frontend timeout during `./start.sh` ("TIMEOUT" then exits with error)
+
+The Nginx build can take 2–5 minutes on first run (npm install + Vite build). If you see a timeout, re-run `./start.sh` — it will detect the already-running containers and skip the startup.
+
+---
+
+### Port 31337 already in use
+
+```bash
+# Find what's using it
+sudo ss -tlnp | grep 31337
+# Or
+sudo lsof -i :31337
+
+# Kill the process or change AIDA_PORT in start.sh
+```
+
+---
+
+### Docker pull fails (no internet / private mirror)
+
+`start.sh` automatically falls back to building the backend from source if the Hub pull fails. The frontend is always built locally regardless. A full build takes ~5 minutes on first run.
 
 ---
 
@@ -315,6 +420,7 @@ TODO
 
 - [**User Guide**](USER_GUIDE.md) - Learn how to use the platform
 - [**MCP Tools Reference**](MCP_TOOLS.md) - All available tools for your AI
+- [**TLS Setup**](TLS.md) - LAN sharing and Let's Encrypt for public domains
 - [**Architecture**](ARCHITECTURE.md) - Technical deep dive
 
 ---

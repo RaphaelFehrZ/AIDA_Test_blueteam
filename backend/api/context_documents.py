@@ -5,6 +5,7 @@ import asyncio
 import io
 import os
 import re
+import shlex
 import tempfile
 import zipfile
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
@@ -24,11 +25,12 @@ router = APIRouter(prefix="/assessments", tags=["context_documents"])
 
 # Allowed file extensions for regular context uploads
 ALLOWED_EXTENSIONS = {
-    '.pdf', '.txt', '.md', '.doc', '.docx',
+    '.pdf', '.txt', '.md', '.doc', '.docx', '.xlsx',
     '.json', '.yaml', '.yml', '.xml', '.ini', '.conf',
     '.png', '.jpg', '.jpeg', '.svg',
     '.zip', '.tar', '.gz',
-    '.csv', '.log', '.html', '.htm'
+    '.csv', '.log', '.html', '.htm',
+    '.pem', '.crt'
 }
 
 # Fallback constants (overridden by DB platform_settings at request time)
@@ -267,7 +269,7 @@ async def _extract_source_zip(assessment_id: int, filename: str, content: bytes,
             rc, _, stderr = await _docker_exec_ctx(
                 container_name,
                 ["python3", "-c",
-                 f"import zipfile,os; z=zipfile.ZipFile('{container_zip}'); os.makedirs('{container_target}',exist_ok=True); z.extractall('{container_target}'); z.close()"],
+                 f"import zipfile,os; z=zipfile.ZipFile({shlex.quote(container_zip)}); os.makedirs({shlex.quote(container_target)},exist_ok=True); z.extractall({shlex.quote(container_target)}); z.close()"],
                 timeout=120
             )
 
@@ -283,7 +285,7 @@ async def _extract_source_zip(assessment_id: int, filename: str, content: bytes,
         # Write metadata
         await _docker_exec_ctx(
             container_name,
-            ["bash", "-c", f"printf 'type=zip\\n' > {container_target}/.source_meta"],
+            ["bash", "-c", f"printf 'type=zip\\n' > {shlex.quote(container_target + '/.source_meta')}"],
             timeout=5
         )
 
@@ -474,19 +476,22 @@ async def list_markdown_files(
             ).first()
             container_name = container_setting.value if container_setting else settings.DEFAULT_CONTAINER_NAME
         
-        # Search for .md files in all workspace folders
+        # Search for .md files in workspace root + subfolders
         workspace_folders = ['recon', 'exploits', 'loot', 'notes', 'scripts', 'context']
         markdown_files = []
-        
+
         container_service = ContainerService()
         container_service.current_container = container_name
-        
-        for folder in workspace_folders:
-            folder_path = f"{assessment.workspace_path}/{folder}"
-            
+
+        # Search workspace root (maxdepth 1 = root-level .md files only)
+        search_paths = [(assessment.workspace_path, 1, ".")] + [
+            (f"{assessment.workspace_path}/{folder}", 2, folder) for folder in workspace_folders
+        ]
+
+        for folder_path, depth, folder_label in search_paths:
             # CRITICAL FIX: Use -maxdepth to avoid recursing into subdirectories of other assessments
             # and verify the file actually belongs to THIS workspace
-            find_cmd = f"find {folder_path} -maxdepth 2 -name '*.md' -type f 2>/dev/null || true"
+            find_cmd = f"find {folder_path} -maxdepth {depth} -name '*.md' -type f 2>/dev/null || true"
             result = await container_service.execute_container_command(find_cmd)
             
             if result.get('success') and result.get('stdout'):
@@ -524,7 +529,7 @@ async def list_markdown_files(
                         "size": size,
                         "size_human": f"{size / 1024:.2f}KB" if size < 1024 * 1024 else f"{size / 1024 / 1024:.2f}MB",
                         "modified": modified,
-                        "folder": folder
+                        "folder": folder_label
                     })
         
         logger.info("Listed markdown files", assessment_id=assessment_id, count=len(markdown_files))

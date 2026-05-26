@@ -187,6 +187,18 @@ async def get_platform_setting(key: str, db: Session = Depends(get_db)):
                 value="false",
                 description="Global toggle to enable CTF mode availability in assessments"
             )
+        if key == "mcp_http_enabled":
+            return PlatformSettingResponse(
+                key=key,
+                value="false",
+                description="Expose the MCP server over HTTP at /mcp (default: off)"
+            )
+        if key == "mcp_http_network_policy":
+            return PlatformSettingResponse(
+                key=key,
+                value="localhost",
+                description="Allowed clients for /mcp: localhost / lan / any"
+            )
         raise fastapi.HTTPException(status_code=404, detail=f"Setting '{key}' not found")
 
     return PlatformSettingResponse(
@@ -242,6 +254,21 @@ async def update_platform_setting(
             raise fastapi.HTTPException(
                 status_code=400,
                 detail="Command history limit must be a valid integer"
+            )
+
+    # Validate MCP HTTP settings
+    if key == "mcp_http_enabled":
+        if request.value.lower() not in ("true", "false"):
+            raise fastapi.HTTPException(
+                status_code=400,
+                detail="mcp_http_enabled must be 'true' or 'false'"
+            )
+        request.value = request.value.lower()
+    if key == "mcp_http_network_policy":
+        if request.value not in ("localhost", "lan", "any"):
+            raise fastapi.HTTPException(
+                status_code=400,
+                detail="mcp_http_network_policy must be 'localhost', 'lan', or 'any'"
             )
 
     # Validate file size limits (stored in MB, 1–2000)
@@ -544,12 +571,10 @@ async def open_folder(request: OpenFolderRequest):
     This is used by the frontend to open the Exegol workspaces folder
     """
     import os
-    
+
     folder_path = request.path
-    
+
     # Security: Only allow opening paths under known safe directories
-    # Use expanduser for home directory
-    import os
     home_dir = os.path.expanduser("~")
     allowed_prefixes = [
         f"{home_dir}/.exegol/workspaces",

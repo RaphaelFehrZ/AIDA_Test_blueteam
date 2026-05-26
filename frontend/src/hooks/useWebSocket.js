@@ -4,7 +4,17 @@
  */
 import { useEffect, useRef, useCallback, useState } from 'react';
 
-const WS_URL = import.meta.env.VITE_API_URL?.replace('http', 'ws') || 'ws://localhost:8000/api';
+// In production (VITE_API_URL=/api), derive the WS host from the browser's
+// current location so the connection works for any IP, not just localhost.
+function resolveWsBaseUrl() {
+  const apiUrl = import.meta.env.VITE_API_URL;
+  if (!apiUrl || apiUrl.startsWith('/')) {
+    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${proto}//${window.location.host}/api`;
+  }
+  return apiUrl.replace(/^http/, 'ws');
+}
+const WS_URL = resolveWsBaseUrl();
 const RECONNECT_DELAY = 3000; // 3 seconds
 const MAX_RECONNECT_ATTEMPTS = 10;
 
@@ -17,18 +27,27 @@ export function useWebSocket(assessmentId = null) {
   const [lastError, setLastError] = useState(null);
   const [lastMessage, setLastMessage] = useState(null);
 
-  // Build WebSocket URL based on assessment ID
+  // Build WebSocket URL based on assessment ID. The JWT is passed via query
+  // string because browser WebSocket clients can't set Authorization headers.
   const getWebSocketUrl = useCallback(() => {
+    const token = localStorage.getItem('aida_token');
+    const tokenQs = token ? `?token=${encodeURIComponent(token)}` : '';
     if (assessmentId) {
-      return `${WS_URL}/ws/assessment/${assessmentId}`;
+      return `${WS_URL}/ws/assessment/${assessmentId}${tokenQs}`;
     }
-    return `${WS_URL}/ws`;
+    return `${WS_URL}/ws${tokenQs}`;
   }, [assessmentId]);
 
   // Connect to WebSocket
   const connect = useCallback(() => {
     // Prevent multiple connections
     if (ws.current?.readyState === WebSocket.OPEN || ws.current?.readyState === WebSocket.CONNECTING) {
+      return;
+    }
+
+    // Don't even try to connect without a token: the backend will close the
+    // socket immediately and we'd burn through the reconnect budget.
+    if (!localStorage.getItem('aida_token')) {
       return;
     }
 

@@ -1,7 +1,14 @@
 """
 WebSocket API endpoints for real-time communication
 """
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from typing import Optional
+
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
+from sqlalchemy.orm import Session
+
+from auth import decode_token
+from database import SessionLocal
+from models.user import User
 from websocket.manager import manager
 from websocket.events import EventType, create_event
 from utils.logger import get_logger
@@ -12,12 +19,32 @@ logger = get_logger(__name__)
 router = APIRouter()
 
 
+def _authenticate_ws(token: Optional[str]) -> Optional[User]:
+    """Validate a JWT token from a WebSocket query string. Returns the User
+    or None if the token is missing/invalid/inactive.
+    """
+    if not token:
+        return None
+    payload = decode_token(token)
+    if not payload:
+        return None
+    db: Session = SessionLocal()
+    try:
+        user = db.query(User).filter(User.id == int(payload["sub"])).first()
+        if user and user.is_active:
+            return user
+        return None
+    finally:
+        db.close()
+
+
 @router.websocket("/ws")
-async def websocket_global(websocket: WebSocket):
-    """
-    Global WebSocket endpoint - receives all events
-    Use this when you want to listen to all system events
-    """
+async def websocket_global(websocket: WebSocket, token: Optional[str] = None):
+    """Global WebSocket endpoint - receives all events."""
+    user = _authenticate_ws(token)
+    if user is None:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
     try:
         await manager.connect(websocket)
 
@@ -76,14 +103,16 @@ async def websocket_global(websocket: WebSocket):
 
 
 @router.websocket("/ws/assessment/{assessment_id}")
-async def websocket_assessment(websocket: WebSocket, assessment_id: int):
-    """
-    Assessment-specific WebSocket endpoint
-    Only receives events related to a specific assessment
-
-    Args:
-        assessment_id: The assessment ID to subscribe to
-    """
+async def websocket_assessment(
+    websocket: WebSocket,
+    assessment_id: int,
+    token: Optional[str] = None,
+):
+    """Assessment-specific WebSocket endpoint - only receives events for a given assessment."""
+    user = _authenticate_ws(token)
+    if user is None:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
     try:
         await manager.connect(websocket, assessment_id=assessment_id)
 

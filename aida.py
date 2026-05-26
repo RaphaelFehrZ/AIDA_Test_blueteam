@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 AIDA CLI Launcher - Professional Python Implementation
-AI-Driven Security Assessment - Intelligent wrapper for Claude Code & Kimi CLI
+AI-Driven Security Assessment - Intelligent wrapper for Claude Code, Kimi CLI & Qwen Code
 """
 import os
 import re
@@ -91,6 +91,8 @@ AIDA_CONFIG_DIR = AIDA_ROOT / ".aida"
 PREPROMPT_FILE = AIDA_ROOT / "Docs" / "PrePrompt.txt"
 MCP_SERVER_PATH = AIDA_ROOT / "backend" / "mcp" / "aida_mcp_server.py"
 MCP_CONFIG_FILE = AIDA_CONFIG_DIR / "mcp-config.json"
+SESSION_FILE = AIDA_CONFIG_DIR / "session"
+API_KEY_FILE = AIDA_CONFIG_DIR / "api-key"
 
 # Kimi-specific config files
 KIMI_AGENT_FILE = AIDA_CONFIG_DIR / "kimi-agent.yaml"
@@ -100,8 +102,10 @@ DEFAULT_MODEL = "claude-sonnet-4-5"
 DEFAULT_PERMISSION = "default"
 DEFAULT_BACKEND = "http://localhost:8000/api"
 
+CONTAINER_PREFS_FILE = AIDA_CONFIG_DIR / "container-preference"
+
 # CLI types
-CLIType = Literal["claude", "kimi"]
+CLIType = Literal["claude", "kimi", "qwen"]
 
 
 _INCLUDE_RE = re.compile(r"\{\{\s*INCLUDE:\s*([^}\s]+)\s*\}\}")
@@ -196,24 +200,6 @@ def ensure_backend_venv(quiet=False) -> Path:
     return python_bin
 
 
-def detect_python_bin(quiet=False) -> str:
-    """Detect Python binary (prefer venv) - returns absolute path"""
-    venv_paths = [
-        AIDA_ROOT / "backend" / "venv" / "bin" / "python",
-        AIDA_ROOT / ".venv" / "bin" / "python",
-    ]
-    
-    for path in venv_paths:
-        if path.exists():
-            if not quiet:
-                console.print(f"[dim]✓ Using venv Python: {path.name}[/dim]")
-            return str(path.absolute())  # Return absolute path
-    
-    if not quiet:
-        console.print("[yellow]⚠ Using system python3[/yellow]")
-    return "python3"
-
-
 def check_exegol_installed() -> bool:
     """Check if Exegol containers exist on the system (doesn't need to be running)"""
     try:
@@ -237,7 +223,7 @@ def check_exegol_installed() -> bool:
         return False
 
 
-def generate_mcp_config(db_url: str, quiet=False) -> None:
+def generate_mcp_config(db_url: str, token: str = "", quiet=False) -> None:
     """Generate MCP configuration file with proper backend venv"""
     AIDA_CONFIG_DIR.mkdir(exist_ok=True)
     
@@ -258,16 +244,37 @@ def generate_mcp_config(db_url: str, quiet=False) -> None:
                 "args": [str(MCP_SERVER_PATH.absolute())],
                 "env": {
                     "PYTHONPATH": str((AIDA_ROOT / "backend").absolute()),
-                    "DATABASE_URL": db_url
+                    "DATABASE_URL": db_url,
+                    "AIDA_TOKEN": token,
                 }
             }
         }
     }
     
     MCP_CONFIG_FILE.write_text(json.dumps(config, indent=2))
+    # Token is embedded in plaintext — restrict to owner only.
+    MCP_CONFIG_FILE.chmod(0o600)
     if not quiet:
         console.print(f"[dim]✓ MCP config: {MCP_CONFIG_FILE.name}[/dim]")
         console.print(f"[dim]  Python: {python_bin_str}[/dim]")
+
+
+def generate_mcp_http_config(url: str, api_key: str, quiet=False) -> None:
+    """Generate an HTTP Streamable-HTTP MCP config for remote servers."""
+    AIDA_CONFIG_DIR.mkdir(exist_ok=True)
+    config = {
+        "mcpServers": {
+            "aida-mcp": {
+                "url": url,
+                "headers": {"Authorization": f"Bearer {api_key}"},
+            }
+        }
+    }
+    MCP_CONFIG_FILE.write_text(json.dumps(config, indent=2))
+    MCP_CONFIG_FILE.chmod(0o600)
+    if not quiet:
+        console.print(f"[dim]✓ MCP config (HTTP): {MCP_CONFIG_FILE.name}[/dim]")
+        console.print(f"[dim]  Endpoint: {url}[/dim]")
 
 
 def generate_kimi_agent_file(preprompt_content: str, assessment_name: Optional[str], 
@@ -312,21 +319,194 @@ agent:
 
 
 def detect_cli() -> CLIType:
-    """Detect which CLI is available (claude or kimi)"""
+    """Detect which CLI is available (claude, kimi, or qwen)"""
     # Check for Claude
     result = subprocess.run(["which", "claude"], capture_output=True)
     if result.returncode == 0:
         return "claude"
-    
+
     # Check for Kimi
     result = subprocess.run(["which", "kimi"], capture_output=True)
     if result.returncode == 0:
         return "kimi"
-    
+
+    # Check for Qwen
+    result = subprocess.run(["which", "qwen"], capture_output=True)
+    if result.returncode == 0:
+        return "qwen"
+
     return None
 
 
-def resolve_workspace(assessment_name: str, backend_url: str) -> Optional[dict]:
+def _read_file_token(path: Path) -> Optional[str]:
+    """Read a token from a chmod-600 file, return None if missing/empty."""
+    if path.exists():
+        try:
+            return path.read_text().strip() or None
+        except OSError:
+            pass
+    return None
+
+
+def _write_file_token(path: Path, token: str) -> None:
+    """Write token to path with owner-only permissions."""
+    AIDA_CONFIG_DIR.mkdir(exist_ok=True)
+    path.write_text(token)
+    path.chmod(0o600)
+
+
+def _validate_token(backend_url: str, token: str) -> bool:
+    """Return True if token is accepted by /auth/me."""
+    try:
+        with httpx.Client(timeout=5.0) as client:
+            r = client.get(f"{backend_url}/auth/me",
+                           headers={"Authorization": f"Bearer {token}"})
+        return r.status_code == 200
+    except httpx.ConnectError:
+        console.print("[red]✗ Cannot reach backend — is it running?[/red]\n")
+        console.print("  → [cyan]docker-compose up -d[/cyan]\n")
+        sys.exit(1)
+
+
+def _do_login(backend_url: str) -> str:
+    """Prompt for credentials, call /auth/login, return short-lived token."""
+    import getpass
+    console.print("[bold]AIDA Backend Login[/bold]")
+    username = console.input("  Username: ")
+    password = getpass.getpass("  Password: ")
+
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            response = client.post(
+                f"{backend_url}/auth/login",
+                json={"username": username, "password": password},
+            )
+        if response.status_code == 200:
+            return response.json()["access_token"]
+        elif response.status_code == 401:
+            console.print("[red]✗ Invalid credentials[/red]\n")
+            sys.exit(1)
+        else:
+            console.print(f"[red]✗ Login failed ({response.status_code})[/red]\n")
+            sys.exit(1)
+    except httpx.ConnectError:
+        console.print("[red]✗ Cannot reach backend — is it running?[/red]\n")
+        console.print("  → [cyan]docker-compose up -d[/cyan]\n")
+        sys.exit(1)
+
+
+def _fetch_api_key(backend_url: str, session_token: str) -> Optional[str]:
+    """Exchange a valid session token for a long-lived API key (1 year)."""
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            r = client.post(
+                f"{backend_url}/auth/api-token",
+                headers={"Authorization": f"Bearer {session_token}"},
+            )
+        if r.status_code == 200:
+            return r.json().get("api_token")
+    except Exception:
+        pass
+    return None
+
+
+def authenticate(backend_url: str) -> str:
+    """Return a valid token for backend API calls.
+
+    Priority:
+      1. AIDA_TOKEN env var (CI / scripting)
+      2. .aida/api-key  — long-lived (1 year), never prompts once set
+      3. .aida/session  — 24h token from a previous login
+      4. Interactive login → issues api-key stored in .aida/api-key
+    """
+    # 1. Env var override (CI / scripting)
+    token = os.getenv("AIDA_TOKEN")
+    if token:
+        return token
+
+    # 2. Long-lived API key — valid for 1 year, silently reused
+    token = _read_file_token(API_KEY_FILE)
+    if token and _validate_token(backend_url, token):
+        return token
+    if token:
+        API_KEY_FILE.unlink(missing_ok=True)  # expired, remove
+
+    # 3. Short-lived session token from a previous login
+    token = _read_file_token(SESSION_FILE)
+    if token and _validate_token(backend_url, token):
+        # Upgrade to a long-lived API key while the session is still valid
+        api_key = _fetch_api_key(backend_url, token)
+        if api_key:
+            _write_file_token(API_KEY_FILE, api_key)
+            SESSION_FILE.unlink(missing_ok=True)
+            return api_key
+        return token
+    if token:
+        SESSION_FILE.unlink(missing_ok=True)
+
+    # 4. Interactive login — first time or after key revocation
+    session_token = _do_login(backend_url)
+    api_key = _fetch_api_key(backend_url, session_token)
+    if api_key:
+        _write_file_token(API_KEY_FILE, api_key)
+        console.print("[green]✓ Authenticated[/green]\n")
+        return api_key
+    # Fallback: api-token endpoint unavailable, cache the session token
+    _write_file_token(SESSION_FILE, session_token)
+    console.print("[green]✓ Authenticated[/green]\n")
+    return session_token
+
+
+# --- Host path translation (WSL / Docker Desktop on Windows) ---
+
+_WIN_PATH_RE = re.compile(r"^([A-Za-z]):[\\/]")
+
+
+def _is_wsl() -> bool:
+    """Return True if running inside WSL (Windows Subsystem for Linux)."""
+    if os.getenv("WSL_DISTRO_NAME") or os.getenv("WSL_INTEROP"):
+        return True
+    try:
+        with open("/proc/version", "r") as f:
+            return "microsoft" in f.read().lower()
+    except OSError:
+        return False
+
+
+def translate_host_path(path: str) -> str:
+    """Translate a Docker-reported host path so it is usable from this process.
+
+    Docker Desktop on Windows reports bind-mount Sources as Windows paths
+    (e.g. ``C:/Users/foo/.exegol/workspaces/default/X``). When the AIDA
+    launcher runs inside WSL, those paths must be rewritten to their WSL
+    equivalent (``/mnt/c/Users/foo/...``) before ``os.chdir`` or any
+    filesystem operation can succeed.
+
+    Returns the path unchanged if no translation is needed.
+    """
+    if not path or not _WIN_PATH_RE.match(path):
+        return path
+    if not _is_wsl():
+        return path  # native Windows Python — caller handles Windows paths natively
+
+    # Prefer wslpath: respects custom mount roots from /etc/wsl.conf.
+    try:
+        result = subprocess.run(
+            ["wslpath", "-u", path],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+
+    # Fallback: manual C:/foo/bar  ->  /mnt/c/foo/bar
+    drive = path[0].lower()
+    rest = path[2:].lstrip("/\\").replace("\\", "/")
+    return f"/mnt/{drive}/{rest}" if rest else f"/mnt/{drive}"
+
+
+def resolve_workspace(assessment_name: str, backend_url: str, token: str = "") -> Optional[dict]:
     """Resolve assessment workspace via API, with retry on transient network errors"""
     import time
 
@@ -334,11 +514,13 @@ def resolve_workspace(assessment_name: str, backend_url: str) -> Optional[dict]:
     retry_delays = [1, 2, 4]  # exponential backoff in seconds
 
     for attempt in range(max_retries):
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
         try:
             with httpx.Client(timeout=10.0) as client:
                 response = client.get(
                     f"{backend_url}/workspace/resolve",
-                    params={"assessment_name": assessment_name}
+                    params={"assessment_name": assessment_name},
+                    headers=headers,
                 )
 
                 if response.status_code == 200:
@@ -377,18 +559,19 @@ def resolve_workspace(assessment_name: str, backend_url: str) -> Optional[dict]:
 def show_assessment_not_found(assessment_name: str, backend_url: str):
     """Display detailed error when assessment workspace cannot be resolved"""
     console.print(f"\n[red]✗ Cannot load assessment '{assessment_name}'[/red]\n")
-    
-    # Check if Exegol is installed
-    if not check_exegol_installed():
-        console.print("[yellow]⚠ Exegol container not detected on this system[/yellow]\n")
-        console.print("[bold]AIDA requires Exegol to execute pentesting commands.[/bold]")
-        console.print("Without Exegol, the AI cannot run security tools.\n")
-    
+
+    container_pref = CONTAINER_PREFS_FILE.read_text().strip() if CONTAINER_PREFS_FILE.exists() else "aida-pentest"
+
+    if container_pref == "exegol" and not check_exegol_installed():
+        console.print("[yellow]⚠ No Exegol container detected on this system[/yellow]\n")
+        console.print("[bold]Start an Exegol container before using AIDA:[/bold]")
+        console.print("  [cyan]exegol start <name>[/cyan]\n")
+
     sys.exit(1)
 
 
 def show_cli_not_found():
-    """Display error when neither Claude nor Kimi CLI is found"""
+    """Display error when neither Claude nor Kimi nor Qwen CLI is found"""
     console.print("[red]✗ No compatible AI CLI found[/red]\n")
     console.print("Please install one of the following:\n")
     console.print("[bold]Claude Code:[/bold]")
@@ -397,27 +580,35 @@ def show_cli_not_found():
     console.print("  [cyan]pip install kimi-cli[/cyan]")
     console.print("  or")
     console.print("  [cyan]uv tool install kimi-cli[/cyan]\n")
+    console.print("[bold]Qwen Code CLI:[/bold]")
+    console.print("  [cyan]npm install -g @qwen-code/qwen-code@latest[/cyan]")
+    console.print("  or")
+    console.print("  [cyan]bash -c \"$(curl -fsSL https://qwen-code-assets.oss-cn-hangzhou.aliyuncs.com/installation/install-qwen.sh)\"[/cyan]\n")
     sys.exit(1)
 
 
 @click.command()
 @click.option("-a", "--assessment", help="Load specific assessment")
 @click.option("-m", "--model", default=None, help="Model to use (optional, uses CLI default if not specified)")
-@click.option("--permission-mode", default=None, help=f"Permission mode for Claude Code (default: {DEFAULT_PERMISSION})")
+@click.option("--permission-mode", default=None, help=f"Permission mode for Claude Code: auto, default, dontAsk, acceptEdits, bypassPermissions, plan (default: {DEFAULT_PERMISSION})")
 @click.option("--preprompt", type=click.Path(exists=False), help="Path to custom preprompt file (default: Docs/PrePrompt.txt)")
 @click.option("--base-url", help="Custom API base URL (Claude Code only)")
 @click.option("--api-key", help="API authentication token (Claude Code only)")
 @click.option("--no-mcp", is_flag=True, help="Disable MCP server")
+@click.option("--http", "http_url", default=None,
+              help="Use the HTTP MCP transport at the given URL (e.g. http://localhost:8000/mcp) instead of stdio")
+@click.option("--mcp-api-key", default=None,
+              help="Bearer API key for the HTTP MCP transport (env: AIDA_MCP_API_KEY)")
 @click.option("--debug", is_flag=True, help="Enable debug mode")
 @click.option("-q", "--quiet", is_flag=True, help="Quiet mode (minimal output)")
-@click.option("--cli", "cli_choice", type=click.Choice(["claude", "kimi", "auto"]), default="auto",
+@click.option("--cli", "cli_choice", type=click.Choice(["claude", "kimi", "qwen", "auto"]), default="auto",
               help="Which CLI to use (default: auto-detect)")
-@click.option("-y", "--yes", is_flag=True, help="Auto-approve all actions (Kimi: --yolo, Claude: permission-mode=accept)")
+@click.option("-y", "--yes", is_flag=True, help="Auto-approve all actions (Kimi/Qwen: --yolo, Claude: permission-mode=accept)")
 @click.argument("prompt", nargs=-1)
-def main(assessment, model, permission_mode, preprompt, base_url, api_key, no_mcp, debug, quiet, cli_choice, yes, prompt):
+def main(assessment, model, permission_mode, preprompt, base_url, api_key, no_mcp, http_url, mcp_api_key, debug, quiet, cli_choice, yes, prompt):
     """AIDA CLI Launcher - AI-Driven Security Assessment
-    
-    Supports both Claude Code and Kimi CLI as underlying AI agents.
+
+    Supports Claude Code, Kimi CLI, and Qwen Code CLI as underlying AI agents.
     """
     
     # Clear terminal for clean start
@@ -451,7 +642,12 @@ def main(assessment, model, permission_mode, preprompt, base_url, api_key, no_mc
     permission_mode = permission_mode or os.getenv("AIDA_PERMISSION_MODE", DEFAULT_PERMISSION)
     backend_url = os.getenv("BACKEND_API_URL", DEFAULT_BACKEND)
     db_url = os.getenv("DATABASE_URL", "postgresql://aida:aida@localhost:5432/aida_assessments")
-    
+
+    # Authenticate once — all subsequent API calls use this token.
+    # The token is also forwarded to the MCP server via AIDA_TOKEN env var.
+    token = authenticate(backend_url)
+    auth_headers = {"Authorization": f"Bearer {token}"}
+
     # Interactive assessment selection if none provided
     if not assessment:
         console.print()
@@ -461,7 +657,7 @@ def main(assessment, model, permission_mode, preprompt, base_url, api_key, no_mc
         # Fetch available assessments
         try:
             with httpx.Client(timeout=5.0) as client:
-                response = client.get(f"{backend_url}/assessments")
+                response = client.get(f"{backend_url}/assessments", headers=auth_headers)
                 
                 if response.status_code != 200:
                     console.print("[red]Failed to fetch assessments from backend[/red]\n")
@@ -567,10 +763,22 @@ def main(assessment, model, permission_mode, preprompt, base_url, api_key, no_mc
     
     # MCP Configuration
     if not no_mcp:
-        if not MCP_SERVER_PATH.exists():
-            console.print(f"[red]✗ MCP server not found: {MCP_SERVER_PATH}[/red]\n")
-            sys.exit(1)
-        generate_mcp_config(db_url, quiet)
+        if http_url or os.getenv("AIDA_MCP_HTTP_URL"):
+            # HTTP transport — don't spawn a subprocess, point the client at the URL.
+            url = http_url or os.getenv("AIDA_MCP_HTTP_URL")
+            key = mcp_api_key or os.getenv("AIDA_MCP_API_KEY", "")
+            if not key:
+                console.print(
+                    "[red]✗ HTTP MCP requires a Bearer key. "
+                    "Pass --mcp-api-key or set AIDA_MCP_API_KEY.[/red]\n"
+                )
+                sys.exit(1)
+            generate_mcp_http_config(url, key, quiet)
+        else:
+            if not MCP_SERVER_PATH.exists():
+                console.print(f"[red]✗ MCP server not found: {MCP_SERVER_PATH}[/red]\n")
+                sys.exit(1)
+            generate_mcp_config(db_url, token, quiet)
     
     # Workspace resolution
     workspace_path = str(AIDA_ROOT)
@@ -581,23 +789,29 @@ def main(assessment, model, permission_mode, preprompt, base_url, api_key, no_mc
         if not quiet and debug:
             console.print(f"[dim]Resolving workspace for: {assessment}[/dim]")
         
-        result = resolve_workspace(assessment, backend_url)
+        result = resolve_workspace(assessment, backend_url, token)
         
         if not result or not result.get("success"):
             show_assessment_not_found(assessment, backend_url)
         
         # Extract workspace info
-        workspace_path = result["host_path"]
+        raw_host_path = result["host_path"]
+        workspace_path = translate_host_path(raw_host_path)
         assessment_id = result["assessment_id"]
         container_name = result["container_name"]
-        
+
+        if workspace_path != raw_host_path and not quiet:
+            console.print(
+                f"[dim]↪ Translated host path for local env:[/dim] "
+                f"[yellow]{raw_host_path}[/yellow] → [green]{workspace_path}[/green]"
+            )
+
         if not quiet and debug:
             console.print(f"[dim]✓ Container: {container_name}[/dim]")
             console.print(f"[dim]✓ Workspace: {workspace_path}[/dim]\n")
-        
-        # For Claude: enhance preprompt with assessment context
-        if cli_type == "claude":
-            preprompt_content += f"""
+
+        # Enhance preprompt with assessment context for all CLI types
+        preprompt_content += f"""
 
 ## **Assessment Loaded**
 
@@ -638,18 +852,18 @@ The assessment workspace is ready. Use your standard tools to work with files an
 
         if base_url:
             env["ANTHROPIC_BASE_URL"] = base_url
-            # Disable prompt caching for external API proxies (Vertex AI, etc.)
-            env["DISABLE_PROMPT_CACHING"] = "1"
+            # For disable prompt caching for external API change 0 to 1
+            env["DISABLE_PROMPT_CACHING"] = "0"
         if api_key:
             env["ANTHROPIC_AUTH_TOKEN"] = api_key
 
-        # Handle --yes flag for Claude (maps to accept permission mode)
+        # Handle --yes flag for Claude (maps to auto permission mode)
         if yes and permission_mode == DEFAULT_PERMISSION:
-            cli_args[cli_args.index("--permission-mode") + 1] = "accept"
+            cli_args[cli_args.index("--permission-mode") + 1] = "auto"
 
         cli_name = "Claude Code"
 
-    else:  # cli_type == "kimi"
+    elif cli_type == "kimi":
         # Build Kimi CLI command
         # Generate agent file for Kimi
         agent_file = generate_kimi_agent_file(
@@ -685,58 +899,198 @@ The assessment workspace is ready. Use your standard tools to work with files an
         env = os.environ.copy()
 
         cli_name = "Kimi CLI"
-    
+
+    else:  # cli_type == "qwen"
+        # Build Qwen Code CLI command
+        # Qwen uses TWO config files:
+        # 1. .qwen/settings.json - MCP servers, models, API keys
+        # 2. QWEN.md - System prompt (markdown file)
+        # Config can be in workspace (project) or ~/.qwen (global)
+        
+        # Create Qwen settings content
+        def create_qwen_settings():
+            # Determine auth type: use qwen-oauth by default, openai if API key/base URL provided
+            auth_type = "qwen-oauth"
+            if api_key or base_url:
+                auth_type = "openai"
+            
+            settings = {
+                "modelProviders": {
+                    "openai": [
+                        {
+                            "id": explicit_model if explicit_model else "coder-model",
+                            "name": explicit_model if explicit_model else "Qwen Coder",
+                        }
+                    ]
+                },
+                "security": {
+                    "auth": {
+                        "selectedType": auth_type
+                    }
+                }
+            }
+            
+            # Add API key if provided (for openai auth)
+            if api_key:
+                settings["modelProviders"]["openai"][0]["apiKey"] = api_key
+            
+            if base_url:
+                settings["modelProviders"]["openai"][0]["baseUrl"] = base_url
+            
+            # Add MCP server configuration if not disabled
+            if not no_mcp and MCP_SERVER_PATH.exists():
+                try:
+                    python_bin = ensure_backend_venv(quiet=True)
+                    python_bin_str = str(python_bin.absolute())
+                except Exception:
+                    python_bin_str = "python3"
+                
+                settings["mcpServers"] = {
+                    "aida-mcp": {
+                        "command": python_bin_str,
+                        "args": [str(MCP_SERVER_PATH.absolute())],
+                        "env": {
+                            "PYTHONPATH": str((AIDA_ROOT / "backend").absolute()),
+                            "DATABASE_URL": db_url
+                        }
+                    }
+                }
+            
+            return settings
+        
+        qwen_settings = create_qwen_settings()
+
+        # Determine config location
+        # Qwen reads QWEN.md from workspace root, and .qwen/settings.json from workspace
+        workspace_qwen_dir = Path(workspace_path) / ".qwen"
+        
+        # Try to create config in workspace
+        config_dir = None
+        config_location = ""
+        
+        try:
+            workspace_qwen_dir.mkdir(parents=True, exist_ok=True)
+            # Test if we can write to it
+            test_file = workspace_qwen_dir / ".write_test"
+            test_file.write_text("test")
+            test_file.unlink()
+            config_dir = workspace_qwen_dir
+            config_location = "workspace"
+        except (PermissionError, OSError) as e:
+            # Can't write to workspace - this is a critical error
+            # We don't fallback to ~/.qwen/ to avoid cross-assessment config pollution
+            if not quiet:
+                console.print("[red]✗ Cannot write to workspace configuration directory[/red]")
+                console.print(f"[dim]  Error: {e}[/dim]")
+                console.print("\n[yellow]Troubleshooting:[/yellow]")
+                console.print("  • Check workspace permissions:")
+                console.print(f"    [cyan]ls -la {workspace_path}[/cyan]")
+                console.print("  • Fix ownership:")
+                console.print(f"    [cyan]sudo chown -R $USER:$USER {workspace_path}[/cyan]\n")
+            sys.exit(1)
+
+        if not quiet:
+            console.print(f"[dim]✓ Qwen config: {config_location} directory[/dim]")
+            console.print(f"[dim]  Path: {config_dir}[/dim]")
+
+        # Write settings.json
+        settings_file = config_dir / "settings.json"
+        settings_file.write_text(json.dumps(qwen_settings, indent=2))
+
+        # Write QWEN.md at workspace ROOT (not in .qwen/)
+        # Qwen Code reads QWEN.md from project root, like CLAUDE.md for Claude Code
+        qwen_md_file = Path(workspace_path) / "QWEN.md"
+        qwen_md_file.write_text(preprompt_content)
+        
+        if not quiet and debug:
+            console.print(f"[dim]✓ System prompt: {qwen_md_file.name} (workspace root)[/dim]\n")
+
+        # Qwen CLI command
+        cli_args = ["qwen"]
+
+        # Add prompt if provided
+        if prompt:
+            cli_args.extend(["-p", " ".join(prompt)])
+
+        env = os.environ.copy()
+        cli_name = "Qwen Code CLI"
+
     # Display launch banner
     if not quiet:
         console.print()
-        
-        # Main info panel
-        panel_content = f"""[bold cyan]AIDA Security Assessment Assistant[/bold cyan]
 
-[dim]CLI:[/dim]            {cli_name}
-[dim]Permission:[/dim]   {"accept (auto)" if yes else permission_mode if cli_type == "claude" else "interactive"}
-[dim]MCP Server:[/dim]   {"[green]Enabled[/green]" if not no_mcp else "[yellow]Disabled[/yellow]"}
-[dim]Directory:[/dim]    {workspace_path}"""
-        
+        # Determine permission display text
+        if cli_type == "claude":
+            permission_text = "accept (auto)" if yes else permission_mode
+        else:
+            permission_text = "yolo (auto)" if yes else "interactive"
+
+        # Build panel content
         if explicit_model:
             panel_content = f"""[bold cyan]AIDA Security Assessment Assistant[/bold cyan]
 
 [dim]CLI:[/dim]            {cli_name}
 [dim]Model:[/dim]        {explicit_model}
-[dim]Permission:[/dim]   {"accept (auto)" if yes else permission_mode if cli_type == "claude" else "interactive"}
+[dim]Permission:[/dim]   {permission_text}
 [dim]MCP Server:[/dim]   {"[green]Enabled[/green]" if not no_mcp else "[yellow]Disabled[/yellow]"}
 [dim]Directory:[/dim]    {workspace_path}"""
-        
+        else:
+            panel_content = f"""[bold cyan]AIDA Security Assessment Assistant[/bold cyan]
+
+[dim]CLI:[/dim]            {cli_name}
+[dim]Permission:[/dim]   {permission_text}
+[dim]MCP Server:[/dim]   {"[green]Enabled[/green]" if not no_mcp else "[yellow]Disabled[/yellow]"}
+[dim]Directory:[/dim]    {workspace_path}"""
+
         if assessment:
             panel_content += f"\n[dim]Assessment:[/dim]  [cyan]{assessment}[/cyan] [dim](ID: {assessment_id})[/dim]"
-        
+
         if cli_type == "claude" and base_url:
             panel_content += f"\n[dim]API:[/dim]         {base_url}"
-        
-        panel = Panel(
-            panel_content,
-            border_style="blue",
-            box=box.DOUBLE,
-            padding=(1, 2)
-        )
+
+        panel = Panel(panel_content, border_style="blue", box=box.DOUBLE, padding=(1, 2))
         console.print(panel)
         console.print()
-    
+
     # Launch CLI
     if not quiet:
         console.print(f"[dim]Starting {cli_name}...[/dim]\n")
     else:
-        # Minimal output in quiet mode
         console.print(f"[cyan]AIDA[/cyan] → {assessment or 'AIDA Project'} ({cli_name})\n")
-    
+
     try:
         if cli_type == "claude":
-            # Claude requires changing to workspace dir
             os.chdir(workspace_path)
             os.execvpe("claude", cli_args, env)
-        else:
-            # Kimi handles work-dir via flag, no need to chdir
+        elif cli_type == "kimi":
             os.execvpe("kimi", cli_args, env)
+        else:  # qwen
+            os.chdir(workspace_path)
+            os.execvpe("qwen", cli_args, env)
+    except FileNotFoundError as e:
+        console.print(f"[red]Failed to launch {cli_name}: {e}[/red]")
+        # Most common cause: backend returned a host path that doesn't exist
+        # on this machine (e.g. Docker Desktop on Windows reported a Windows
+        # path while we're running in WSL, or the assessment dir was deleted).
+        if workspace_path and not Path(workspace_path).exists():
+            console.print(
+                f"\n[yellow]The workspace directory does not exist on this host:[/yellow] "
+                f"{workspace_path}"
+            )
+            if _WIN_PATH_RE.match(workspace_path):
+                console.print(
+                    "[yellow]This looks like a Windows path. If you are running "
+                    "AIDA from WSL, ensure `wslpath` is available "
+                    "(it ships with WSL by default) and that the C: drive is "
+                    "mounted under /mnt/c.[/yellow]"
+                )
+            elif _is_wsl():
+                console.print(
+                    "[yellow]Verify the Exegol container's workspace mount with:[/yellow]\n"
+                    f"  [cyan]docker inspect {container_name} --format "
+                    "'{{json .Mounts}}'[/cyan]"
+                )
+        sys.exit(1)
     except Exception as e:
         console.print(f"[red]Failed to launch {cli_name}: {e}[/red]")
         sys.exit(1)

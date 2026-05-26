@@ -1,24 +1,23 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { Target, Server, Shield, ArrowLeft, AlertTriangle, Info, Eye, TrendingUp, Filter, FolderOpen, RefreshCw, FileText, Plus, Download, ChevronDown } from '../components/icons';
+import { Target, Server, Shield, ArrowLeft, AlertTriangle, Info, Eye, TrendingUp, Filter, FolderOpen, RefreshCw, Download, Send, Play, Copy, Check, Plus, ChevronDown, FileText } from '../components/icons';
 import apiClient from '../services/api';
 import workspaceService from '../services/workspaceService';
 import EditableField from '../components/common/EditableField';
 import ReconTable from '../components/assessment/ReconTable';
-import PhaseSection from '../components/assessment/PhaseSection';
-import PhaseContentViewSimple from '../components/assessment/PhaseContentViewSimple';
 import CardsTable from '../components/assessment/CardsTable';
 import CommandHistoryRefactored from '../components/assessment/CommandHistoryRefactored';
 import ImportScanModal from '../components/assessment/ImportScanModal';
 import CredentialsManager from '../components/assessment/CredentialsManager';
 import ContextDocumentsPanel from '../components/assessment/ContextDocumentsPanel';
+import AttackTimeline from '../components/assessment/AttackTimeline';
+import SendReportModal from '../components/assessment/SendReportModal';
 import CtfOverview from '../components/assessment/CtfOverview';
 
 import ChangeContainerModal from '../components/workspace/ChangeContainerModal';
-import MarkdownDocumentsModal from '../components/assessment/MarkdownDocumentsModal';
+import MethodologyReport from '../components/assessment/MethodologyReport';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { getSeverityBarClass, SEVERITY_ORDER } from '../utils/severity';
-import { PHASE_NAMES } from '../utils/phases';
 
 // Group order: findings first, then observations, then info
 const CARD_TYPE_ORDER = { finding: 3, observation: 2, info: 1 };
@@ -43,27 +42,101 @@ const AssessmentDetail = () => {
   const [reconData, setReconData] = useState([]);
   const [reconCategories, setReconCategories] = useState(['endpoint', 'subdomain', 'service', 'technology']);
   const [cards, setCards] = useState([]);
-  const [sections, setSections] = useState([]);
   const [commands, setCommands] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [activePhase, setActivePhase] = useState(1); // Phase 1 par défaut
   const [cardFilter, setCardFilter] = useState('overview'); // Filter for cards view
   const [addCardTrigger, setAddCardTrigger] = useState(0);
   const [showImportModal, setShowImportModal] = useState(false);
   const [openingWorkspace, setOpeningWorkspace] = useState(false);
   const [showChangeContainerModal, setShowChangeContainerModal] = useState(false);
-  const [showMarkdownModal, setShowMarkdownModal] = useState(false);
-  const [showStealthConfig, setShowStealthConfig] = useState(false);
+
+  const [exportingPdf, setExportingPdf] = useState(false);
+  const [showPdfMenu, setShowPdfMenu] = useState(false);
+  const pdfMenuRef = useRef(null);
+  const [showSendReport, setShowSendReport] = useState(false);
+  const [showStartAI, setShowStartAI] = useState(false);
+  const [copiedCmd, setCopiedCmd] = useState(false);
+  const [launchingAI, setLaunchingAI] = useState(false);
+  const [launchResult, setLaunchResult] = useState(null);
+  const [showMcpNotice, setShowMcpNotice] = useState(false);
+  const startAIRef = useRef(null);
+
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [exporting, setExporting] = useState(false);
   const exportMenuRef = useRef(null);
 
+  // Close the PDF export menu when clicking outside it.
+  useEffect(() => {
+    if (!showPdfMenu) return;
+    const onDown = (e) => {
+      if (pdfMenuRef.current && !pdfMenuRef.current.contains(e.target)) {
+        setShowPdfMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [showPdfMenu]);
+
+  useEffect(() => {
+    if (!showExportMenu) return;
+    const onClick = (e) => {
+      if (exportMenuRef.current && !exportMenuRef.current.contains(e.target)) {
+        setShowExportMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', onClick);
+    return () => document.removeEventListener('mousedown', onClick);
+  }, [showExportMenu]);
+
+  const handleExport = async (format) => {
+    setShowExportMenu(false);
+    setExporting(true);
+    try {
+      const response = await apiClient.get(`/assessments/${id}/export/${format}`, {
+        responseType: 'blob',
+      });
+      const disposition = response.headers['content-disposition'] || '';
+      const match = disposition.match(/filename="?([^"]+)"?/i);
+      const fallback = format === 'csv'
+        ? `${assessment?.name || 'assessment'}_findings.csv`
+        : `${assessment?.name || 'assessment'}_findings_latex.zip`;
+      const filename = match ? match[1] : fallback;
+
+      const blobUrl = URL.createObjectURL(response.data);
+      const anchor = document.createElement('a');
+      anchor.href = blobUrl;
+      anchor.download = filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      URL.revokeObjectURL(blobUrl);
+    } catch (error) {
+      console.error(`Failed to export ${format}:`, error);
+      alert(`Failed to export ${format.toUpperCase()}: ${error.response?.data?.detail || error.message}`);
+    } finally {
+      setExporting(false);
+    }
+  };
+
   // WebSocket connection for real-time updates
-  const { subscribe, isConnected } = useWebSocket(id);
+  const { subscribe } = useWebSocket(id);
 
   useEffect(() => {
     loadAssessment();
   }, [id]);
+
+  // Close Start AI popup on click outside
+  useEffect(() => {
+    if (!showStartAI) return;
+    const handleClickOutside = (e) => {
+      if (startAIRef.current && !startAIRef.current.contains(e.target)) {
+        setShowStartAI(false);
+        setLaunchResult(null);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showStartAI]);
 
   // Subscribe to WebSocket events for real-time updates
   useEffect(() => {
@@ -105,21 +178,6 @@ const AssessmentDetail = () => {
       setReconData(prev => prev.filter(recon => recon.id !== data.recon_id));
     });
 
-    // Section events
-    const unsubscribeSectionUpdated = subscribe('section_updated', (data) => {
-
-      setSections(prev => {
-        const index = prev.findIndex(s => s.id === data.section.id);
-        if (index >= 0) {
-          const newSections = [...prev];
-          newSections[index] = data.section;
-          return newSections;
-        } else {
-          return [...prev, data.section];
-        }
-      });
-    });
-
     // Command events
     const unsubscribeCommandCompleted = subscribe('command_completed', (data) => {
 
@@ -145,7 +203,6 @@ const AssessmentDetail = () => {
       unsubscribeReconAdded();
       unsubscribeReconUpdated();
       unsubscribeReconDeleted();
-      unsubscribeSectionUpdated();
       unsubscribeCommandCompleted();
       unsubscribeCommandFailed();
       unsubscribeAssessmentUpdated();
@@ -157,12 +214,11 @@ const AssessmentDetail = () => {
       setLoading(true);
 
       // Load all data in parallel
-      const [assessmentRes, reconRes, reconTypesRes, cardsRes, sectionsRes, commandsRes] = await Promise.all([
+      const [assessmentRes, reconRes, reconTypesRes, cardsRes, commandsRes] = await Promise.all([
         apiClient.get(`/assessments/${id}`),
         apiClient.get(`/assessments/${id}/recon`),
         apiClient.get(`/assessments/${id}/recon/types`),
         apiClient.get(`/assessments/${id}/cards`),
-        apiClient.get(`/assessments/${id}/sections`),
         apiClient.get(`/assessments/${id}/commands?limit=10000`),
       ]);
 
@@ -170,7 +226,6 @@ const AssessmentDetail = () => {
       setReconData(reconRes.data);
       setReconCategories(reconTypesRes.data.length > 0 ? reconTypesRes.data : reconCategories);
       setCards(cardsRes.data);
-      setSections(sectionsRes.data);
       setCommands(commandsRes.data);
     } catch (error) {
       console.error('Failed to load assessment:', error);
@@ -182,9 +237,35 @@ const AssessmentDetail = () => {
   const updateAssessment = async (field, value) => {
     try {
       await apiClient.put(`/assessments/${id}`, { [field]: value });
-      setAssessment({ ...assessment, [field]: value });
+      setAssessment(prev => ({ ...prev, [field]: value }));
     } catch (error) {
       console.error('Failed to update assessment:', error);
+    }
+  };
+
+  const handleExportPdf = async ({ includeSecrets = false } = {}) => {
+    setShowPdfMenu(false);
+    setExportingPdf(true);
+    try {
+      const response = await apiClient.get(`/assessments/${id}/report/pdf`, {
+        params: { include_secrets: includeSecrets },
+        responseType: 'blob',
+      });
+      const url = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
+      const suffix = includeSecrets ? '_with_creds' : '';
+      const safeName = assessment.name.replace(/[^a-zA-Z0-9 _-]/g, '_');
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `AIDA_Report_${safeName}${suffix}.pdf`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('PDF export failed:', err);
+      alert('Failed to generate PDF report. Check console for details.');
+    } finally {
+      setExportingPdf(false);
     }
   };
 
@@ -203,7 +284,7 @@ const AssessmentDetail = () => {
       if (result.success && result.host_path) {
         // Try to open via local folder opener service (runs on host)
         try {
-          const { openFolderOnHost } = await import('../services/folderOpenerService');
+          const { openFolderOnHost } = await import('../services/hostHelperService');
           const openResult = await openFolderOnHost(result.host_path);
           if (openResult.success) {
             return; // Success!
@@ -235,55 +316,11 @@ const AssessmentDetail = () => {
     await loadAssessment();
   };
 
-  // Close export menu when clicking outside
-  useEffect(() => {
-    if (!showExportMenu) return;
-    const onClick = (e) => {
-      if (exportMenuRef.current && !exportMenuRef.current.contains(e.target)) {
-        setShowExportMenu(false);
-      }
-    };
-    document.addEventListener('mousedown', onClick);
-    return () => document.removeEventListener('mousedown', onClick);
-  }, [showExportMenu]);
-
-  const handleExport = async (format) => {
-    setShowExportMenu(false);
-    setExporting(true);
-    try {
-      const response = await apiClient.get(`/assessments/${id}/export/${format}`, {
-        responseType: 'blob',
-      });
-      // Derive filename from Content-Disposition or fall back
-      const disposition = response.headers['content-disposition'] || '';
-      const match = disposition.match(/filename="?([^"]+)"?/i);
-      const fallback = format === 'csv'
-        ? `${assessment?.name || 'assessment'}_findings.csv`
-        : `${assessment?.name || 'assessment'}_findings_latex.zip`;
-      const filename = match ? match[1] : fallback;
-
-      const blobUrl = URL.createObjectURL(response.data);
-      const anchor = document.createElement('a');
-      anchor.href = blobUrl;
-      anchor.download = filename;
-      document.body.appendChild(anchor);
-      anchor.click();
-      document.body.removeChild(anchor);
-      URL.revokeObjectURL(blobUrl);
-    } catch (error) {
-      console.error(`Failed to export ${format}:`, error);
-      alert(`Failed to export ${format.toUpperCase()}: ${error.response?.data?.detail || error.message}`);
-    } finally {
-      setExporting(false);
-    }
-  };
-
   // Calculate statistics
   const stats = useMemo(() => {
     const findings = cards.filter(c => c.card_type === 'finding');
     const observations = cards.filter(c => c.card_type === 'observation');
     const infos = cards.filter(c => c.card_type === 'info');
-    const challenges = cards.filter(c => c.card_type === 'challenge');
 
     // Recent activity (last 7 days)
     const sevenDaysAgo = new Date();
@@ -299,18 +336,16 @@ const AssessmentDetail = () => {
       findings: findings.length,
       observations: observations.length,
       infos: infos.length,
-      challenges: challenges.length,
       critical: findings.filter(f => f.severity === 'CRITICAL').length,
       high: findings.filter(f => f.severity === 'HIGH').length,
       medium: findings.filter(f => f.severity === 'MEDIUM').length,
       low: findings.filter(f => f.severity === 'LOW').length,
       commands: commands.length,
       recon: reconData.length,
-      phases: sections.length,
       recentCards: recentCards.length,
       last24hCards: last24hCards.length
     };
-  }, [cards, commands, reconData, sections]);
+  }, [cards, commands, reconData]);
 
   // Filter cards based on selected filter
   const filteredCards = useMemo(() => {
@@ -324,9 +359,6 @@ const AssessmentDetail = () => {
         break;
       case 'info':
         result = cards.filter(c => c.card_type === 'info');
-        break;
-      case 'challenges':
-        result = cards.filter(c => c.card_type === 'challenge');
         break;
       case 'critical':
         result = cards.filter(c => c.severity === 'CRITICAL');
@@ -347,6 +379,15 @@ const AssessmentDetail = () => {
     }
     return [...result].sort(sortByScore);
   }, [cards, cardFilter]);
+
+  // Recon categories sorted by item count (descending) — counts precomputed to avoid O(n²) in sort
+  const sortedReconCategories = useMemo(() => {
+    const counts = {};
+    for (const item of reconData) {
+      counts[item.data_type] = (counts[item.data_type] || 0) + 1;
+    }
+    return [...reconCategories].sort((a, b) => (counts[b] || 0) - (counts[a] || 0));
+  }, [reconData, reconCategories]);
 
   // Calculate risk distribution percentages
   const getRiskDistribution = () => {
@@ -402,7 +443,7 @@ const AssessmentDetail = () => {
             <h1 className="text-lg font-semibold text-gray-900 dark:text-neutral-100">{assessment.name}</h1>
             <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-neutral-400">
               <span>{assessment.client_name || 'No client'}</span>
-              {assessment.environment && assessment.environment !== 'non_specified' && (
+              {assessment.environment && assessment.environment !== 'non_specifie' && (
                 <>
                   <span>•</span>
                   <span className={`font-medium ${assessment.environment === 'production'
@@ -410,23 +451,6 @@ const AssessmentDetail = () => {
                     : 'text-green-600 dark:text-green-400'
                     }`}>
                     {assessment.environment === 'production' ? 'Production' : 'Dev'}
-                  </span>
-                </>
-              )}
-              {assessment.stealth_profile && assessment.stealth_profile !== 'normal' && (
-                <>
-                  <span>•</span>
-                  <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium ${
-                    assessment.stealth_profile === 'ghost'
-                      ? 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300'
-                      : assessment.stealth_profile === 'careful'
-                        ? 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300'
-                        : 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300'
-                  }`}>
-                    {assessment.stealth_profile === 'ghost' && '👻'}
-                    {assessment.stealth_profile === 'careful' && '🔇'}
-                    {assessment.stealth_profile === 'aggressive' && '⚡'}
-                    {assessment.stealth_profile.charAt(0).toUpperCase() + assessment.stealth_profile.slice(1)}
                   </span>
                 </>
               )}
@@ -477,13 +501,68 @@ const AssessmentDetail = () => {
               </>
             )}
           </button>
+
+          <div ref={pdfMenuRef} className="relative inline-flex">
+            <button
+              onClick={() => handleExportPdf({ includeSecrets: false })}
+              disabled={exportingPdf}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-neutral-700 dark:text-neutral-300 bg-neutral-50 dark:bg-neutral-700/50 border border-neutral-200 dark:border-neutral-600 hover:bg-neutral-100 dark:hover:bg-neutral-700 hover:border-neutral-300 dark:hover:border-neutral-500 rounded-l-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Export PDF — passwords and tokens are masked"
+            >
+              {exportingPdf ? (
+                <>
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  <span>Generating...</span>
+                </>
+              ) : (
+                <>
+                  <Download className="w-3.5 h-3.5" />
+                  <span>PDF</span>
+                </>
+              )}
+            </button>
+            <button
+              onClick={() => setShowPdfMenu((v) => !v)}
+              disabled={exportingPdf}
+              className="inline-flex items-center px-1.5 py-1.5 text-xs text-neutral-700 dark:text-neutral-300 bg-neutral-50 dark:bg-neutral-700/50 border border-l-0 border-neutral-200 dark:border-neutral-600 hover:bg-neutral-100 dark:hover:bg-neutral-700 hover:border-neutral-300 dark:hover:border-neutral-500 rounded-r-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              title="More export options"
+              aria-haspopup="menu"
+              aria-expanded={showPdfMenu}
+            >
+              <ChevronDown className="w-3.5 h-3.5" />
+            </button>
+            {showPdfMenu && (
+              <div role="menu" className="absolute right-0 top-full mt-1 z-20 w-72 rounded-md border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-800 shadow-lg p-1 text-xs">
+                <button
+                  role="menuitem"
+                  onClick={() => handleExportPdf({ includeSecrets: false })}
+                  className="w-full text-left px-3 py-2 rounded hover:bg-neutral-100 dark:hover:bg-neutral-700/60"
+                >
+                  <div className="font-medium text-neutral-800 dark:text-neutral-100">Download PDF — secrets masked</div>
+                  <div className="mt-0.5 text-[11px] text-neutral-500 dark:text-neutral-400 leading-snug">
+                    Passwords, tokens and cookies replaced by <code className="font-mono">[REDACTED]</code>. Safe to share with the client.
+                  </div>
+                </button>
+                <button
+                  role="menuitem"
+                  onClick={() => handleExportPdf({ includeSecrets: true })}
+                  className="w-full text-left px-3 py-2 rounded hover:bg-rose-50 dark:hover:bg-rose-900/20"
+                >
+                  <div className="font-medium text-rose-700 dark:text-rose-300">Download PDF — include credentials</div>
+                  <div className="mt-0.5 text-[11px] text-neutral-500 dark:text-neutral-400 leading-snug">
+                    Plaintext passwords and tokens embedded. Internal use only — file is suffixed <code className="font-mono">_with_creds</code>.
+                  </div>
+                </button>
+              </div>
+            )}
+          </div>
           <button
-            onClick={() => setShowMarkdownModal(true)}
+            onClick={() => setShowSendReport(true)}
             className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-neutral-700 dark:text-neutral-300 bg-neutral-50 dark:bg-neutral-700/50 border border-neutral-200 dark:border-neutral-600 hover:bg-neutral-100 dark:hover:bg-neutral-700 hover:border-neutral-300 dark:hover:border-neutral-500 rounded-md transition-colors"
-            title="View markdown documents"
+            title="Send report via Telegram, Slack, or Email"
           >
-            <FileText className="w-3.5 h-3.5" />
-            <span>Docs</span>
+            <Send className="w-3.5 h-3.5" />
+            <span>Send</span>
           </button>
           <div className="relative" ref={exportMenuRef}>
             <button
@@ -525,14 +604,100 @@ const AssessmentDetail = () => {
               </div>
             )}
           </div>
-          <span className={`px-2 py-1 rounded-full text-xs font-medium ${assessment.status === 'in_progress'
-            ? 'bg-primary-100 dark:bg-primary-900/30 text-primary-700 dark:text-primary-300'
-            : assessment.status === 'completed'
-              ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300'
-              : 'bg-neutral-100 dark:bg-neutral-700 text-neutral-600 dark:text-neutral-300'
-            }`}>
-            {assessment.status}
-          </span>
+          <div className="relative" ref={startAIRef}>
+            <button
+              onClick={() => {
+                if (!localStorage.getItem('aida_mcp_notice_seen')) {
+                  setShowMcpNotice(true);
+                  return;
+                }
+                // Clear any stale result from a previous open so the popup
+                // always starts fresh — otherwise reopening after a success
+                // shows the old success banner with no launch button.
+                if (!showStartAI) setLaunchResult(null);
+                setShowStartAI(!showStartAI);
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-primary-600 hover:bg-primary-700 border border-primary-600 rounded-md transition-colors"
+              title="Start AI-driven scan"
+            >
+              <Play className="w-3.5 h-3.5" />
+              <span>Start AI</span>
+            </button>
+            {showStartAI && (
+              <div className="absolute right-0 top-full mt-2 w-96 bg-white dark:bg-neutral-800 rounded-lg shadow-xl border border-neutral-200 dark:border-neutral-700 p-4 z-50">
+                <h4 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100 mb-3">Launch AI Scan</h4>
+
+                {launchResult?.type === 'success' ? (
+                  /* Success state — only show confirmation */
+                  <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 text-sm">
+                    <Check className="w-4 h-4 flex-shrink-0" />
+                    <span>Terminal opened with AI scan</span>
+                  </div>
+                ) : (
+                  <>
+                    {/* Launch button */}
+                    <button
+                      onClick={async () => {
+                        setLaunchingAI(true);
+                        setLaunchResult(null);
+                        try {
+                          const resp = await fetch('http://localhost:9876/launch', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ assessment_name: assessment.name }),
+                          });
+                          const data = await resp.json();
+                          setLaunchResult(data.success ? { type: 'success', text: 'Terminal opened with AI scan!' } : { type: 'error', text: data.error || 'Failed to launch' });
+                        } catch (e) {
+                          setLaunchResult({ type: 'error', text: 'Host helper not running. Use the command below instead.' });
+                        } finally {
+                          setLaunchingAI(false);
+                        }
+                      }}
+                      disabled={launchingAI}
+                      className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-primary-600 hover:bg-primary-700 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+                    >
+                      <Play className="w-4 h-4" />
+                      {launchingAI ? 'Opening terminal...' : 'Open in Terminal'}
+                    </button>
+
+                    {launchResult?.type === 'error' && (
+                      <div className="mt-2 flex items-start gap-1.5 px-2.5 py-1.5 rounded text-xs bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400">
+                        <AlertTriangle className="w-3 h-3 mt-0.5 flex-shrink-0" />
+                        <span>{launchResult.text}</span>
+                      </div>
+                    )}
+
+                    {/* Fallback: copy command */}
+                    <div className="mt-3 pt-3 border-t border-neutral-200 dark:border-neutral-700">
+                      <p className="text-[10px] text-neutral-500 dark:text-neutral-400 mb-1.5">Or run manually:</p>
+                      <div className="relative">
+                        <pre className="text-[11px] font-mono bg-neutral-900 text-green-400 px-3 py-2 rounded-lg overflow-x-auto">python3 aida.py -a "{assessment.name}"</pre>
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(`python3 aida.py -a "${assessment.name}"`);
+                            setCopiedCmd(true);
+                            setTimeout(() => setCopiedCmd(false), 2000);
+                          }}
+                          className="absolute top-1 right-1 p-1 rounded bg-neutral-700 hover:bg-neutral-600"
+                        >
+                          {copiedCmd ? <Check className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3 text-neutral-400" />}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="mt-2 text-[10px] text-neutral-500 dark:text-neutral-400">
+                      Commands requiring approval will appear in the <strong>Commands</strong> page.
+                    </div>
+                  </>
+                )}
+
+                <button onClick={() => { setShowStartAI(false); setLaunchResult(null); }} className="mt-3 w-full text-xs text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300">
+                  Close
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -591,164 +756,67 @@ const AssessmentDetail = () => {
           <h2 className="text-sm font-semibold text-gray-800 dark:text-neutral-100">Assessment Settings</h2>
         </div>
         <div className="p-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-            <div>
-              <span className="font-medium text-gray-700 dark:text-neutral-300">Client:</span>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4 text-sm">
+            <div className="flex flex-col gap-1">
+              <span className="text-xs font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">Client</span>
               <EditableField
                 value={assessment.client_name || ''}
                 onSave={(value) => updateAssessment('client_name', value)}
                 placeholder="Client name"
-                className="text-gray-900 dark:text-neutral-100 ml-2"
+                className="text-gray-900 dark:text-neutral-100"
               />
             </div>
-            <div>
-              <span className="font-medium text-gray-700 dark:text-neutral-300">Scope:</span>
+            <div className="flex flex-col gap-1">
+              <span className="text-xs font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">Scope</span>
               <EditableField
                 value={assessment.scope || ''}
                 onSave={(value) => updateAssessment('scope', value)}
                 placeholder="Assessment scope"
-                className="text-gray-900 dark:text-neutral-100 ml-2"
+                className="text-gray-900 dark:text-neutral-100"
               />
             </div>
-            <div>
-              <span className="font-medium text-gray-700 dark:text-neutral-300">Domains:</span>
+            <div className="flex flex-col gap-1">
+              <span className="text-xs font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">Domains</span>
               <EditableField
                 value={assessment.target_domains || ''}
                 onSave={(value) => updateAssessment('target_domains', value)}
                 placeholder="Target domains"
                 multiline
-                className="text-gray-900 dark:text-neutral-100 ml-2"
+                className="text-gray-900 dark:text-neutral-100"
               />
             </div>
-            <div>
-              <span className="font-medium text-gray-700 dark:text-neutral-300">IP Scopes:</span>
+            <div className="flex flex-col gap-1">
+              <span className="text-xs font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">IP Scopes</span>
               <EditableField
                 value={assessment.ip_scopes || ''}
                 onSave={(value) => updateAssessment('ip_scopes', value)}
                 placeholder="IP scopes"
                 multiline
-                className="text-gray-900 dark:text-neutral-100 ml-2"
+                className="text-gray-900 dark:text-neutral-100"
               />
             </div>
-            <div>
-              <span className="font-medium text-gray-700 dark:text-neutral-300">Limitations:</span>
+            <div className="flex flex-col gap-1">
+              <span className="text-xs font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">Limitations</span>
               <EditableField
                 value={assessment.limitations || ''}
                 onSave={(value) => updateAssessment('limitations', value)}
                 placeholder="Assessment limitations"
                 multiline
-                className="text-gray-900 dark:text-neutral-100 ml-2"
+                className="text-gray-900 dark:text-neutral-100"
               />
             </div>
-            <div>
-              <span className="font-medium text-gray-700 dark:text-neutral-300">Objectives:</span>
+            <div className="flex flex-col gap-1">
+              <span className="text-xs font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">Objectives</span>
               <EditableField
                 value={assessment.objectives || ''}
                 onSave={(value) => updateAssessment('objectives', value)}
                 placeholder="Assessment objectives"
                 multiline
-                className="text-gray-900 dark:text-neutral-100 ml-2"
+                className="text-gray-900 dark:text-neutral-100"
               />
             </div>
           </div>
         </div>
-      </div>
-
-      {/* Stealth Configuration */}
-      <div className="bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-lg">
-        <button
-          onClick={() => setShowStealthConfig(!showStealthConfig)}
-          className="w-full px-4 py-3 border-b border-neutral-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-900 flex items-center justify-between rounded-t-lg"
-        >
-          <div className="flex items-center gap-2">
-            <Shield className="w-4 h-4 text-purple-500" />
-            <h2 className="text-sm font-semibold text-gray-800 dark:text-neutral-100">Stealth Configuration</h2>
-            {assessment.stealth_profile && assessment.stealth_profile !== 'normal' && (
-              <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${
-                assessment.stealth_profile === 'ghost'
-                  ? 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300'
-                  : assessment.stealth_profile === 'careful'
-                    ? 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300'
-                    : 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300'
-              }`}>
-                {assessment.stealth_profile.toUpperCase()}
-              </span>
-            )}
-          </div>
-          <svg className={`w-4 h-4 text-neutral-400 transition-transform ${showStealthConfig ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-          </svg>
-        </button>
-        {showStealthConfig && (
-          <div className="p-4 space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-              {/* Stealth Profile */}
-              <div>
-                <label className="block font-medium text-gray-700 dark:text-neutral-300 mb-1">Profile</label>
-                <select
-                  value={assessment.stealth_profile || 'normal'}
-                  onChange={(e) => updateAssessment('stealth_profile', e.target.value)}
-                  className="input text-sm"
-                >
-                  <option value="normal">Normal</option>
-                  <option value="careful">Careful</option>
-                  <option value="ghost">Ghost</option>
-                  <option value="aggressive">Aggressive</option>
-                </select>
-              </div>
-              {/* Proxy */}
-              <div>
-                <span className="font-medium text-gray-700 dark:text-neutral-300">Proxy:</span>
-                <EditableField
-                  value={assessment.proxy_config || ''}
-                  onSave={(value) => updateAssessment('proxy_config', value)}
-                  placeholder="socks5://127.0.0.1:9050"
-                  className="text-gray-900 dark:text-neutral-100 ml-2"
-                />
-              </div>
-              {/* User-Agent */}
-              <div>
-                <span className="font-medium text-gray-700 dark:text-neutral-300">User-Agent:</span>
-                <EditableField
-                  value={assessment.custom_user_agent || ''}
-                  onSave={(value) => updateAssessment('custom_user_agent', value)}
-                  placeholder="Custom user-agent string"
-                  className="text-gray-900 dark:text-neutral-100 ml-2"
-                />
-              </div>
-              {/* Scan Delay */}
-              <div>
-                <span className="font-medium text-gray-700 dark:text-neutral-300">Scan Delay:</span>
-                <EditableField
-                  value={assessment.scan_delay || ''}
-                  onSave={(value) => updateAssessment('scan_delay', value)}
-                  placeholder="e.g. 500ms, 2s, 1-5s"
-                  className="text-gray-900 dark:text-neutral-100 ml-2"
-                />
-              </div>
-              {/* Max Rate */}
-              <div>
-                <span className="font-medium text-gray-700 dark:text-neutral-300">Max Rate:</span>
-                <EditableField
-                  value={assessment.max_rate != null ? String(assessment.max_rate) : ''}
-                  onSave={(value) => updateAssessment('max_rate', value ? parseInt(value) : null)}
-                  placeholder="requests/sec"
-                  className="text-gray-900 dark:text-neutral-100 ml-2"
-                />
-              </div>
-              {/* Decoy IPs */}
-              <div>
-                <span className="font-medium text-gray-700 dark:text-neutral-300">Decoy IPs:</span>
-                <EditableField
-                  value={assessment.decoy_ips || ''}
-                  onSave={(value) => updateAssessment('decoy_ips', value)}
-                  placeholder="RND:10 or comma-separated IPs"
-                  className="text-gray-900 dark:text-neutral-100 ml-2"
-                />
-              </div>
-            </div>
-          </div>
-        )}
       </div>
 
       {/* Credentials & Tokens Section - Minimalist */}
@@ -768,11 +836,7 @@ const AssessmentDetail = () => {
         <h2 className="text-sm font-semibold text-gray-800 dark:text-neutral-100">Reconnaissance Data</h2>
         <div className="space-y-3">
           {/* Render categories in pairs (2 columns) */}
-          {[...reconCategories]
-            .sort((a, b) =>
-              reconData.filter(i => i.data_type === b).length -
-              reconData.filter(i => i.data_type === a).length
-            )
+          {sortedReconCategories
             .reduce((pairs, category, index, sorted) => {
               if (index % 2 === 0) pairs.push(sorted.slice(index, index + 2));
               return pairs;
@@ -854,20 +918,6 @@ const AssessmentDetail = () => {
             <span>Info</span>
             <span className={`${cardFilter === 'info' ? 'opacity-90' : 'opacity-60'}`}>{stats.infos}</span>
           </button>
-
-          {/* Challenges filter - only when CTF mode is on */}
-          {assessment?.ctf_mode && (
-            <button
-              onClick={() => setCardFilter('challenges')}
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all ${cardFilter === 'challenges'
-                ? 'bg-purple-500 text-white shadow-sm'
-                : 'bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-300 hover:bg-purple-100 dark:hover:bg-purple-900/30'
-                }`}
-            >
-              <span>Challenges</span>
-              <span className={`${cardFilter === 'challenges' ? 'opacity-90' : 'opacity-60'}`}>{stats.challenges}</span>
-            </button>
-          )}
 
           {/* Divider */}
           <div className="h-6 w-px bg-neutral-300 dark:bg-neutral-600 mx-1"></div>
@@ -996,12 +1046,10 @@ const AssessmentDetail = () => {
                     assessmentId={id}
                     onUpdate={loadAssessment}
                     hideAddButton
-                    ctfMode={assessment?.ctf_mode}
                   />
                 </>
               )}
 
-              {/* CTF Overview - only when ctf_mode is enabled */}
               {assessment?.ctf_mode && (
                 <div>
                   <h3 className="text-lg font-semibold text-neutral-900 dark:text-neutral-100 mb-4 flex items-center gap-2">
@@ -1022,76 +1070,20 @@ const AssessmentDetail = () => {
           ) : (
             /* Filtered view */
             <div>
-              {filteredCards.length === 0 ? (
-                <div className="text-center py-12 text-neutral-500 dark:text-neutral-400">
-                  <Shield className="w-12 h-12 mx-auto mb-3 text-neutral-300 dark:text-neutral-600" />
-                  <p className="text-sm">No cards found for this filter</p>
-                </div>
-              ) : (
-                <CardsTable
-                  cards={filteredCards}
-                  assessmentId={id}
-                  onUpdate={loadAssessment}
-                  hideAddButton
-                  externalTrigger={addCardTrigger}
-                  ctfMode={assessment?.ctf_mode}
-                />
-              )}
+              <CardsTable
+                cards={filteredCards}
+                assessmentId={id}
+                onUpdate={loadAssessment}
+                hideAddButton
+                externalTrigger={addCardTrigger}
+              />
             </div>
           )}
         </div>
       </div>
 
-      {/* Assessment Phases - Vue Pleine Largeur Simple */}
-      <div>
-        {/* Navigation horizontale + Header */}
-        <div className="mb-6">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-neutral-100">Assessment Phases</h2>
-          </div>
-
-          {/* Navigation horizontale des phases */}
-          <div className="flex space-x-1 border-b border-gray-200 dark:border-neutral-700">
-            {[1, 2, 3, 4, 5].map((phaseNum) => {
-              const section = sections.find(s => s.section_type === `phase_${phaseNum}`);
-              const hasContent = section?.content;
-
-              return (
-                <button
-                  key={phaseNum}
-                  onClick={() => setActivePhase(phaseNum)}
-                  className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${activePhase === phaseNum
-                    ? 'border-blue-500 text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30'
-                    : 'border-transparent text-gray-500 dark:text-neutral-400 hover:text-gray-700 dark:hover:text-neutral-200 hover:border-gray-300 dark:hover:border-neutral-600'
-                    }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <span>Phase {phaseNum}</span>
-                    {hasContent && (
-                      <div className="w-1.5 h-1.5 bg-green-500 rounded-full"></div>
-                    )}
-                  </div>
-                  <div className="text-xs text-gray-500 dark:text-neutral-400 mt-0.5">
-                    {PHASE_NAMES[phaseNum]}
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Contenu de la phase active - Pleine largeur */}
-        {activePhase && (
-          <PhaseContentViewSimple
-            phaseNumber={activePhase}
-            assessmentId={id}
-            section={sections.find(s => s.section_type === `phase_${activePhase}`)}
-            onUpdate={loadAssessment}
-            cards={cards.filter(c => c.section_number === activePhase)}
-            commands={commands.filter(c => c.phase?.includes(`Phase ${activePhase}`))}
-          />
-        )}
-      </div>
+      {/* Methodology Report */}
+      <MethodologyReport assessmentId={parseInt(id)} />
 
       {/* Command History - Version compacte et navigable */}
       <div className="bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-lg">
@@ -1105,12 +1097,74 @@ const AssessmentDetail = () => {
           <CommandHistoryRefactored commands={commands} />
         </div>
       </div>
-      {/* Markdown Documents Modal */}
-      {showMarkdownModal && (
-        <MarkdownDocumentsModal
+      {/* Attack Timeline */}
+      <div className="bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-lg">
+        <div className="p-4">
+          <AttackTimeline assessmentId={parseInt(id)} />
+        </div>
+      </div>
+
+      {/* Send Report Modal */}
+      {showSendReport && (
+        <SendReportModal
           assessmentId={parseInt(id)}
-          onClose={() => setShowMarkdownModal(false)}
+          assessmentName={assessment.name}
+          onClose={() => setShowSendReport(false)}
         />
+      )}
+
+
+
+      {/* First-time MCP notice modal */}
+      {showMcpNotice && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 dark:bg-black/70 backdrop-blur-sm animate-fade-in">
+          <div className="bg-white dark:bg-neutral-800 rounded-xl shadow-strong max-w-md w-full mx-4 animate-slide-up">
+            <div className="px-6 pt-6 pb-4">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="flex-shrink-0 w-10 h-10 rounded-full bg-primary-100 dark:bg-primary-900/30 flex items-center justify-center">
+                  <Info className="w-5 h-5 text-primary-600 dark:text-primary-400" />
+                </div>
+                <div>
+                  <h3 className="text-base font-semibold text-neutral-900 dark:text-neutral-100">Before you start</h3>
+                  <p className="text-xs text-neutral-500 dark:text-neutral-400">Authentication required for AI clients</p>
+                </div>
+              </div>
+
+              <div className="space-y-3 text-sm text-neutral-700 dark:text-neutral-300">
+                <p>
+                  To connect an AI client (Claude Desktop, Cursor, Gemini, etc.) via MCP, you need to run <code className="font-mono text-xs bg-neutral-100 dark:bg-neutral-700 px-1.5 py-0.5 rounded">aida.py</code> once from your terminal first.
+                </p>
+                <p>This authenticates against the backend and caches a long-lived API key — every subsequent launch is silent.</p>
+                <div className="bg-neutral-900 rounded-lg px-4 py-3 font-mono text-xs text-green-400">
+                  python3 aida.py
+                </div>
+                <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                  Using <strong className="text-neutral-600 dark:text-neutral-300">Claude Code or Kimi CLI</strong>? The launcher handles everything automatically — no extra step needed.
+                </p>
+              </div>
+            </div>
+
+            <div className="px-6 py-4 border-t border-neutral-200 dark:border-neutral-700 flex justify-end gap-3">
+              <button
+                onClick={() => setShowMcpNotice(false)}
+                className="btn btn-secondary btn-sm"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  localStorage.setItem('aida_mcp_notice_seen', '1');
+                  setShowMcpNotice(false);
+                  setLaunchResult(null);
+                  setShowStartAI(true);
+                }}
+                className="btn btn-primary btn-sm"
+              >
+                Got it
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

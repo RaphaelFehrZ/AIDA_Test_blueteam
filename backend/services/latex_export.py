@@ -79,6 +79,30 @@ def escape_latex(text: str | None) -> str:
     return out.replace(_BACKSLASH_SENTINEL, r"\textbackslash{}")
 
 
+def sanitize_listing_body(text: str | None) -> str:
+    """Neutralize the lstlisting terminator inside verbatim evidence.
+
+    Content placed between \\begin{lstlisting} and \\end{lstlisting} is verbatim,
+    so escape_latex must NOT be applied. But that also means the ONLY way out of
+    the listing is the literal terminator string ``\\end{lstlisting}``. Since
+    evidence is user-controlled (card.proof / card.context), an attacker could
+    embed that terminator to close the listing early and inject LaTeX such as
+    ``\\input{/etc/passwd}`` (local file read) or, under -shell-escape,
+    ``\\write18{...}`` (RCE on the report builder). Break the terminator token so
+    it can never appear literally, tolerating case and inner whitespace.
+    """
+    if text is None:
+        return ""
+    # Insert a space after the backslash so the contiguous "\end{lstlisting}"
+    # sequence no longer exists; the text still renders readably as verbatim.
+    return re.sub(
+        r"\\(end\s*\{\s*lstlisting\s*\})",
+        r"\\ \1",
+        text,
+        flags=re.IGNORECASE,
+    )
+
+
 def slugify(text: str, fallback: str = "finding") -> str:
     """Turn a title into a filesystem-safe slug (ascii, kebab-case)."""
     if not text:
@@ -168,7 +192,7 @@ def render_finding(
     id_lower = id_upper.lower()
 
     summary, body = _summary_and_body(card)
-    evidence = (card.proof or card.context or "").rstrip()
+    evidence = sanitize_listing_body((card.proof or card.context or "").rstrip())
     risks = _split_bullet_lines(getattr(card, "risks", None)) or _split_bullet_lines(card.context)
     recs = _split_bullet_lines(getattr(card, "recommendations", None))
 

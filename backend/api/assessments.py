@@ -196,6 +196,28 @@ async def update_assessment(
 
     # Update fields
     update_data = assessment_update.model_dump(exclude_unset=True)
+
+    # Guard the CTF invariant: challenge cards may only exist on ctf_mode
+    # assessments. Refuse to disable CTF mode while any challenge card remains,
+    # otherwise those cards become permanently uneditable (update_card rejects
+    # every edit to a challenge card on a non-CTF assessment). The operator can
+    # convert or delete the challenge cards first (that still works while CTF
+    # mode is on), then disable CTF mode.
+    if update_data.get("ctf_mode") is False and assessment.ctf_mode:
+        challenge_count = db.query(Card).filter(
+            Card.assessment_id == assessment_id,
+            Card.card_type == "challenge",
+        ).count()
+        if challenge_count:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Cannot disable CTF mode: {challenge_count} challenge "
+                    "card(s) still exist. Convert them to a standard card type "
+                    "or delete them first."
+                ),
+            )
+
     for field, value in update_data.items():
         setattr(assessment, field, value)
 

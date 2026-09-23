@@ -1024,6 +1024,7 @@ const AssessmentDetail = () => {
                 onUpdate={loadAssessment}
                 hideAddButton
                 externalTrigger={addCardTrigger}
+                ctfMode={assessment?.ctf_mode}
               />
 
               {/* Divider — Observations & Info */}
@@ -1044,6 +1045,7 @@ const AssessmentDetail = () => {
                     assessmentId={id}
                     onUpdate={loadAssessment}
                     hideAddButton
+                    ctfMode={assessment?.ctf_mode}
                   />
                 </>
               )}
@@ -1074,6 +1076,7 @@ const AssessmentDetail = () => {
                 onUpdate={loadAssessment}
                 hideAddButton
                 externalTrigger={addCardTrigger}
+                ctfMode={assessment?.ctf_mode}
               />
             </div>
           )}

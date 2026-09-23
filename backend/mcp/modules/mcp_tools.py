@@ -742,4 +742,131 @@ def get_tool_definitions() -> List[Tool]:
                 "required": []
             }
         ),
+
+        # ========== Mobile App Testing (physical device over USB host-agent) ==========
+        # Dynamic tools require AIDA in 'localhost' deployment mode (the USB device
+        # is on the host, not in the pentest container). mobile_static_scan works in
+        # either mode (it operates on an APK/IPA file).
+        Tool(
+            name="mobile_devices",
+            description="List connected physical mobile devices and confirm frida reachability. Android: adb devices. iOS: idevice_id + ideviceinfo. Requires localhost deployment mode. Run this first — an empty result means no device is connected.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "platform": {
+                        "type": "string",
+                        "enum": ["android", "ios", "all"],
+                        "description": "Which platform to enumerate. Default: all"
+                    }
+                },
+                "required": []
+            }
+        ),
+        Tool(
+            name="mobile_list_apps",
+            description="List installed apps on the connected device. Android: pm list packages. iOS: frida-ps -Uai. Save interesting package/bundle ids with add_recon_data. Requires localhost deployment mode.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "platform": {
+                        "type": "string",
+                        "enum": ["android", "ios"],
+                        "description": "Target platform"
+                    },
+                    "third_party_only": {
+                        "type": "boolean",
+                        "description": "Android only: list only user-installed (-3) packages. Default: true"
+                    },
+                    "filter": {
+                        "type": "string",
+                        "description": "Optional case-insensitive substring filter on the app list"
+                    }
+                },
+                "required": ["platform"]
+            }
+        ),
+        Tool(
+            name="mobile_pull_app",
+            description="Pull an app binary off the device for static analysis. Android: resolves and adb-pulls the APK(s). iOS: frida-ios-dump produces a decrypted IPA (jailbroken device). Goes through the command-approval gate. Requires localhost deployment mode.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "platform": {
+                        "type": "string",
+                        "enum": ["android", "ios"],
+                        "description": "Target platform"
+                    },
+                    "package": {
+                        "type": "string",
+                        "description": "Package name (Android) or bundle id (iOS) to pull"
+                    },
+                    "out_dir": {
+                        "type": "string",
+                        "description": "Destination directory on the host (default: the assessment workspace)"
+                    }
+                },
+                "required": ["platform", "package"]
+            }
+        ),
+        Tool(
+            name="mobile_static_scan",
+            description="Static analysis of an APK/IPA file. Android: jadx decompile + apkleaks (secrets/endpoints) + optional apktool manifest. iOS: unzip + strings/plist + class-dump (Linux best-effort). Works in container or localhost mode.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "artifact_path": {
+                        "type": "string",
+                        "description": "Path to the .apk or .ipa file (on the host in localhost mode, or in the container)"
+                    },
+                    "platform": {
+                        "type": "string",
+                        "enum": ["android", "ios"],
+                        "description": "Artifact platform"
+                    },
+                    "tools": {
+                        "type": "array",
+                        "items": {"type": "string", "enum": ["jadx", "apkleaks", "apktool", "strings", "class-dump"]},
+                        "description": "Which analyzers to run. Default: apkleaks+jadx (Android), strings+class-dump (iOS)"
+                    }
+                },
+                "required": ["artifact_path", "platform"]
+            }
+        ),
+        Tool(
+            name="mobile_frida",
+            description="Run a Frida instrumentation session against a live app (SSL-pinning / root / jailbreak-detection bypass, class enumeration, or a custom script). DANGEROUS: injects code into a running app on a physical device — ALWAYS goes through the command-approval gate. Requires localhost deployment mode and a running frida-server.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "platform": {
+                        "type": "string",
+                        "enum": ["android", "ios"],
+                        "description": "Target platform"
+                    },
+                    "target": {
+                        "type": "string",
+                        "description": "Package name / bundle id (spawn) or process name/pid (attach)"
+                    },
+                    "action": {
+                        "type": "string",
+                        "enum": ["spawn", "attach"],
+                        "description": "spawn a fresh instance or attach to a running one. Default: spawn"
+                    },
+                    "preset": {
+                        "type": "string",
+                        "enum": ["ssl_pinning_bypass", "root_detection_bypass", "jailbreak_bypass", "list_classes"],
+                        "description": "A built-in objection/frida action. Mutually exclusive with 'script'."
+                    },
+                    "script": {
+                        "type": "string",
+                        "description": "Inline Frida JavaScript to run (advanced). Mutually exclusive with 'preset'."
+                    },
+                    "timeout": {
+                        "type": "integer",
+                        "description": "Seconds to let the session run before returning. Default: 20"
+                    }
+                },
+                "required": ["platform", "target"]
+            }
+        ),
     ]

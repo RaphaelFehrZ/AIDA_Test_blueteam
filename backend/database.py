@@ -122,6 +122,8 @@ def _ensure_columns():
         "ALTER TABLE cards ADD COLUMN IF NOT EXISTS flag_status VARCHAR(50)",
         "ALTER TABLE cards ADD COLUMN IF NOT EXISTS points INTEGER",
         "ALTER TABLE cards ADD COLUMN IF NOT EXISTS challenge_category VARCHAR(50)",
+        # Mobile device testing (physical phone over USB host-agent)
+        "ALTER TABLE assessments ADD COLUMN IF NOT EXISTS mobile_device VARCHAR(255)",
     ]
     try:
         with engine.begin() as conn:

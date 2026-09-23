@@ -103,6 +103,7 @@ class AidaMCPService:
         self.tool_cache: Dict[str, bool] = {}
         self.current_target: Optional[str] = None
         self.current_stealth_config: Optional[Dict[str, Any]] = None
+        self.current_mobile_device: Optional[str] = None  # adb serial / iOS UDID
 
         # Output formatting settings
         self.output_max_length: int = 5000  # Default value
@@ -623,12 +624,26 @@ class AidaMCPService:
                 assessment_data = response.json()
                 from stealth_profiles import resolve_stealth_config
                 self.current_stealth_config = resolve_stealth_config(assessment_data)
+                # Cache the mobile device id from the same fetch (avoids a 2nd round-trip)
+                self.current_mobile_device = assessment_data.get("mobile_device")
                 file_log.info(f"Loaded stealth config: profile={self.current_stealth_config.get('profile_name', 'normal')}")
                 return self.current_stealth_config
         except Exception as e:
             file_log.warning(f"Failed to load stealth config: {e}")
 
         return None
+
+    async def get_mobile_device(self) -> Optional[str]:
+        """Get the mobile device id (adb serial / iOS UDID) for the current assessment.
+
+        Returns None when no device is pinned (tools then let adb/frida auto-detect
+        the single attached device). The value is cached as a side effect of
+        get_stealth_config's assessment fetch, so this reuses that round-trip.
+        """
+        if self.current_mobile_device is not None:
+            return self.current_mobile_device
+        await self.get_stealth_config()
+        return self.current_mobile_device
 
     def format_output(self, output: str, max_length: Optional[int] = None) -> str:
         """Format and truncate output for display

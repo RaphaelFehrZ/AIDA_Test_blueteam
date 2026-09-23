@@ -54,6 +54,8 @@ class AssessmentBase(BaseModel):
     nikto_tuning: Optional[str] = None
     # CTF Mode
     ctf_mode: Optional[bool] = False
+    # Mobile device (adb serial / iOS UDID; disambiguates when >1 device attached)
+    mobile_device: Optional[str] = None
 
 
 class AssessmentCreate(AssessmentBase):
@@ -116,6 +118,8 @@ class AssessmentUpdate(BaseModel):
     nikto_tuning: Optional[str] = None
     # CTF Mode
     ctf_mode: Optional[bool] = None
+    # Mobile device (adb serial / iOS UDID)
+    mobile_device: Optional[str] = None
 
 
 class AssessmentResponse(AssessmentBase):

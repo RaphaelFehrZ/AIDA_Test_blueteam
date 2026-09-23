@@ -60,6 +60,9 @@ class Assessment(Base):
     asvs_level = Column(Integer, nullable=True)            # 1 | 2 | 3 (ASVS only)
     asvs_version = Column(String(20), nullable=True)       # e.g. "5.0.0"
 
+    # Mobile device testing (physical rooted/jailbroken phone over USB host-agent)
+    mobile_device = Column(String(255), nullable=True)  # adb serial / iOS UDID; disambiguates when >1 device attached
+
     # Folder Management (optional organization)
     folder_id = Column(Integer, ForeignKey('folders.id'), nullable=True)
 

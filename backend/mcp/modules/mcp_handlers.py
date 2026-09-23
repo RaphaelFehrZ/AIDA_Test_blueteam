@@ -5,6 +5,7 @@ Handles: load_assessment, add_*, list_*, update_*, execute, pentesting tools
 import asyncio
 import json
 import logging
+import shlex
 import time
 from typing import List, Optional
 from mcp.types import TextContent
@@ -155,6 +156,23 @@ async def handle_tool_call(name: str, arguments: dict, mcp_service) -> List[Text
         elif name == "tech_detection":
             return await _handle_tech_detection(arguments, mcp_service)
 
+        # ========== Mobile App Testing ==========
+
+        elif name == "mobile_devices":
+            return await _handle_mobile_devices(arguments, mcp_service)
+
+        elif name == "mobile_list_apps":
+            return await _handle_mobile_list_apps(arguments, mcp_service)
+
+        elif name == "mobile_pull_app":
+            return await _handle_mobile_pull_app(arguments, mcp_service)
+
+        elif name == "mobile_static_scan":
+            return await _handle_mobile_static_scan(arguments, mcp_service)
+
+        elif name == "mobile_frida":
+            return await _handle_mobile_frida(arguments, mcp_service)
+
         # ========== Credentials Management ==========
 
         elif name == "credentials_add":
@@ -193,6 +211,7 @@ async def _handle_load_assessment(arguments: dict, mcp_service) -> List[TextCont
     mcp_service.current_assessment_id = assessment["id"]
     mcp_service.current_assessment_name = assessment["name"]
     mcp_service.current_stealth_config = None  # Clear cache so it refreshes
+    mcp_service.current_mobile_device = None  # Clear cache so it refreshes
 
     # If skip_data, return minimal response
     if skip_data:
@@ -459,7 +478,7 @@ async def _handle_create_assessment(arguments: dict, mcp_service) -> List[TextCo
         "client_name", "scope", "limitations", "objectives",
         "target_domains", "ip_scopes", "credentials", "access_info",
         "category", "environment", "environment_notes",
-        "start_date", "end_date"
+        "start_date", "end_date", "mobile_device"
     ]
     for field in optional_fields:
         value = arguments.get(field)
@@ -482,6 +501,8 @@ async def _handle_create_assessment(arguments: dict, mcp_service) -> List[TextCo
         # Auto-load: set current assessment context
         mcp_service.current_assessment_id = assessment["id"]
         mcp_service.current_assessment_name = assessment["name"]
+        mcp_service.current_stealth_config = None  # Clear caches so they refresh
+        mcp_service.current_mobile_device = None
 
         # Format success response
         result = f"**Assessment Created and Loaded: {assessment['name']}**\n\n"
@@ -1649,6 +1670,268 @@ async def _handle_tech_detection(arguments: dict, mcp_service) -> List[TextConte
             response += f"Error with {cmd_result['command']}: {cmd_result['error']}\n\n"
 
     return [TextContent(type="text", text=response)]
+
+
+# ========== Mobile App Testing Handlers ==========
+#
+# A physical rooted/jailbroken phone is USB-connected to the HOST, so these tools
+# only reach it when AIDA runs in 'localhost' deployment mode (execution routes
+# through the host-agent). In container mode the device is unreachable; the tools
+# fail closed with a clear message, except mobile_static_scan which operates on a
+# file and works in either mode. Read-only enumeration runs on the fast direct
+# path (30s cap); slow/dangerous ops route through _handle_execute /
+# _await_command_approval (300s host-agent path + approval + logging).
+
+
+def _require_localhost(mcp_service, tool_label: str):
+    """Return an error TextContent list if not in localhost mode, else None."""
+    if getattr(mcp_service, "deployment_mode", "container") != "localhost":
+        return [TextContent(type="text", text=(
+            f"**{tool_label} requires localhost deployment mode.**\n\n"
+            "A USB-connected phone lives on the host, which the pentest container "
+            "cannot reach. Restart AIDA in localhost mode to use physical-device "
+            "tools. (`mobile_static_scan` still works in container mode on an "
+            "uploaded APK/IPA file.)"
+        ))]
+    return None
+
+
+async def _mobile_device_flag(mcp_service, kind: str) -> str:
+    """Device-selector flag for the assessment's pinned device, else '' (auto-detect).
+
+    kind: 'adb' -> '-s <serial>', 'frida' -> '--device <id>', 'idevice' -> '-u <udid>'.
+    Trailing space included so callers can interpolate `adb {flag}shell ...`.
+    """
+    device = await mcp_service.get_mobile_device()
+    if not device:
+        return ""
+    flag = {"adb": "-s", "frida": "--device", "idevice": "-u"}.get(kind)
+    if not flag:
+        return ""
+    return f"{flag} {shlex.quote(device)} "
+
+
+def _mobile_container(mcp_service) -> str:
+    """Execution target for direct-path mobile commands (host in localhost mode)."""
+    return mcp_service.current_container or getattr(mcp_service, "localhost_label", "localhost")
+
+
+async def _handle_mobile_devices(arguments: dict, mcp_service) -> List[TextContent]:
+    """List connected devices (adb / libimobiledevice) and confirm frida reachability."""
+    guard = _require_localhost(mcp_service, "mobile_devices")
+    if guard:
+        return guard
+
+    platform = arguments.get("platform", "all")
+    checks = []
+    if platform in ("android", "all"):
+        checks.append(("adb devices", "adb devices -l"))
+    if platform in ("ios", "all"):
+        checks.append(("idevice_id", "idevice_id -l 2>&1"))
+    checks.append(("frida-ps -Uai", "frida-ps -Uai 2>&1"))
+
+    response = "**Connected mobile devices**\n\n"
+    any_output = False
+    for label, command in checks:
+        tool = command.split()[0]
+        if not await mcp_service.check_tool_availability(tool):
+            response += (f"**{label}:** `{tool}` not installed — run "
+                         "`tools/setup_mobile_host.sh` on the host.\n\n")
+            continue
+        result = await mcp_service.execute_container_command(_mobile_container(mcp_service), command)
+        out = (result.get("stdout") or "").strip()
+        err = (result.get("stderr") or "").strip()
+        if out:
+            any_output = True
+        response += f"**{label}:**\n```\n{out or err or '(no output)'}\n```\n\n"
+
+    if not any_output:
+        response += ("_No device output. Connect the phone via USB, enable USB "
+                     "debugging (Android) or pair the jailbroken device (iOS), and "
+                     "make sure frida-server is running and version-matched._\n")
+    return [TextContent(type="text", text=response)]
+
+
+async def _handle_mobile_list_apps(arguments: dict, mcp_service) -> List[TextContent]:
+    """List installed apps on the connected device."""
+    guard = _require_localhost(mcp_service, "mobile_list_apps")
+    if guard:
+        return guard
+
+    platform = arguments["platform"]
+    filt = arguments.get("filter")
+    if platform == "android":
+        adb = await _mobile_device_flag(mcp_service, "adb")
+        third_party = "-3 " if arguments.get("third_party_only", True) else ""
+        command = f"adb {adb}shell pm list packages {third_party}| sed 's/package://' | sort"
+        tool = "adb"
+    else:
+        command = "frida-ps -Uai"
+        tool = "frida-ps"
+    if filt:
+        command += f" | grep -i {shlex.quote(filt)}"
+
+    if not await mcp_service.check_tool_availability(tool):
+        return [TextContent(type="text", text=(
+            f"`{tool}` not installed — run `tools/setup_mobile_host.sh` on the host."))]
+
+    result = await mcp_service.execute_container_command(_mobile_container(mcp_service), command)
+    out = (result.get("stdout") or "").strip() or (result.get("stderr") or "").strip() or "(no apps / no device)"
+    response = (f"**Installed apps ({platform}):**\n```\n{out}\n```\n\n"
+                "Save interesting package/bundle ids with `add_recon_data`.")
+    return [TextContent(type="text", text=response)]
+
+
+async def _handle_mobile_pull_app(arguments: dict, mcp_service) -> List[TextContent]:
+    """Pull an app binary (APK/IPA) off the device. Goes through the approval gate."""
+    guard = _require_localhost(mcp_service, "mobile_pull_app")
+    if guard:
+        return guard
+
+    platform = arguments["platform"]
+    package = shlex.quote(arguments["package"])
+    out_dir = shlex.quote(arguments.get("out_dir") or "/workspace")
+
+    if platform == "android":
+        adb = await _mobile_device_flag(mcp_service, "adb")
+        command = (
+            f"mkdir -p {out_dir}; "
+            f"for p in $(adb {adb}shell pm path {package} | sed 's/package://' | tr -d '\\r'); do "
+            f"echo \"pulling $p\"; adb {adb}pull \"$p\" {out_dir}/; done"
+        )
+    else:
+        command = f"mkdir -p {out_dir}; /opt/frida-ios-dump/dump.py -o {out_dir} {package}"
+
+    return await _handle_execute({"command": command, "phase": "mobile_dynamic"}, mcp_service)
+
+
+async def _handle_mobile_static_scan(arguments: dict, mcp_service) -> List[TextContent]:
+    """Static analysis of an APK/IPA. Works in container or localhost mode."""
+    platform = arguments["platform"]
+    artifact = shlex.quote(arguments["artifact_path"])
+    tools = arguments.get("tools")
+    url_grep = "grep -aoE 'https?://[a-zA-Z0-9./_?=&%:-]+' | sort -u | head -100"
+
+    if platform == "android":
+        tools = tools or ["apkleaks", "jadx"]
+        parts = []
+        if "apkleaks" in tools:
+            parts.append(f"echo '=== apkleaks (secrets / endpoints) ==='; apkleaks -f {artifact} 2>&1 | head -200")
+        if "jadx" in tools:
+            parts.append(
+                f"echo '=== jadx: manifest + source tree ==='; d=$(mktemp -d); "
+                f"jadx -d \"$d\" {artifact} >/dev/null 2>&1; "
+                f"cat \"$d\"/resources/AndroidManifest.xml 2>/dev/null | head -120; "
+                f"echo '--- packages (top) ---'; find \"$d\"/sources -maxdepth 3 -type d 2>/dev/null | head -60; rm -rf \"$d\""
+            )
+        if "apktool" in tools:
+            parts.append(
+                f"echo '=== apktool manifest ==='; d=$(mktemp -d); "
+                f"apktool d -f -o \"$d\" {artifact} >/dev/null 2>&1; "
+                f"cat \"$d/AndroidManifest.xml\" 2>/dev/null | head -120; rm -rf \"$d\""
+            )
+        if "strings" in tools:
+            parts.append(f"echo '=== embedded URLs ==='; unzip -p {artifact} 2>/dev/null | strings | {url_grep}")
+        command = " ; ".join(parts)
+        tool_check = "apkleaks" if "apkleaks" in tools else "jadx"
+    else:  # ios
+        tools = tools or ["strings", "class-dump"]
+        parts = [f"echo '=== IPA contents ==='; unzip -l {artifact} 2>&1 | head -60"]
+        if "strings" in tools:
+            parts.append(f"echo '=== embedded URLs ==='; unzip -p {artifact} 2>/dev/null | strings | {url_grep}")
+        if "class-dump" in tools:
+            parts.append(
+                f"echo '=== class-dump (best-effort on Linux) ==='; d=$(mktemp -d); "
+                f"unzip -o -q {artifact} -d \"$d\"; "
+                f"bin=$(find \"$d/Payload\" -maxdepth 2 -type f -path '*.app/*' 2>/dev/null | head -1); "
+                f"class-dump \"$bin\" 2>&1 | head -200; rm -rf \"$d\""
+            )
+        command = " ; ".join(parts)
+        tool_check = "strings"
+
+    if not await mcp_service.check_tool_availability(tool_check):
+        return [TextContent(type="text", text=(
+            f"`{tool_check}` not installed — add mobile static tools via "
+            "`tools/setup_mobile_host.sh` (host) or rebuild the pentest container."))]
+
+    # Decompile/scan can exceed the 30s direct cap → route through the host-agent path.
+    return await _handle_execute({"command": command, "phase": "mobile_static"}, mcp_service)
+
+
+async def _handle_mobile_frida(arguments: dict, mcp_service) -> List[TextContent]:
+    """Run a Frida/objection session against a live app. ALWAYS requires approval."""
+    guard = _require_localhost(mcp_service, "mobile_frida")
+    if guard:
+        return guard
+
+    platform = arguments["platform"]
+    target = arguments["target"]
+    action = arguments.get("action", "spawn")
+    preset = arguments.get("preset")
+    script = arguments.get("script")
+    run_timeout = int(arguments.get("timeout", 20))
+
+    if preset and script:
+        return [TextContent(type="text", text="Provide either 'preset' or 'script', not both.")]
+    if not preset and not script:
+        return [TextContent(type="text", text="Provide a 'preset' or an inline 'script'.")]
+
+    tq = shlex.quote(target)
+    if script:
+        spawn = "-f" if action == "spawn" else ("-p" if str(target).isdigit() else "-n")
+        command = (
+            f"tmp=$(mktemp /tmp/aida_frida_XXXXXX.js); "
+            f"cat > \"$tmp\" <<'AIDA_FRIDA_EOF'\n{script}\nAIDA_FRIDA_EOF\n"
+            f"timeout {run_timeout} frida -U {spawn} {tq} -l \"$tmp\" -q; rm -f \"$tmp\""
+        )
+        label = "custom script"
+    else:
+        objection_presets = {
+            ("android", "ssl_pinning_bypass"): "android sslpinning disable",
+            ("ios", "ssl_pinning_bypass"): "ios sslpinning disable",
+            ("android", "root_detection_bypass"): "android root disable",
+            ("ios", "jailbreak_bypass"): "ios jailbreak disable",
+            ("android", "list_classes"): "android hooking list classes",
+            ("ios", "list_classes"): "ios hooking list classes",
+        }
+        startup = objection_presets.get((platform, preset))
+        if not startup:
+            return [TextContent(type="text", text=f"Preset '{preset}' is not available for {platform}.")]
+        command = (f"echo exit | timeout {run_timeout} objection -g {tq} explore "
+                   f"--startup-command {shlex.quote(startup)}")
+        label = preset
+
+    # Always gate on human approval — this injects code into a live app.
+    timeout_seconds = 300
+    try:
+        s = await mcp_service.http_client.get(f"{mcp_service.backend_url}/command-settings")
+        if s.status_code == 200:
+            timeout_seconds = s.json().get("timeout_seconds", 300)
+    except Exception:
+        pass
+
+    status_result, payload = await _await_command_approval(
+        mcp_service,
+        command=command,
+        phase="mobile_dynamic",
+        matched_keywords=["frida", "objection"],
+        timeout_seconds=timeout_seconds,
+    )
+
+    if status_result == "error":
+        return [TextContent(type="text", text=f"**Frida run blocked — approval request failed:** {payload}")]
+    if status_result == "rejected":
+        return [TextContent(type="text", text="**Frida run rejected by operator.** Nothing was executed.")]
+    if status_result == "timeout":
+        return [TextContent(type="text", text=f"**Frida approval timed out** after {timeout_seconds}s. Nothing was executed.")]
+    if status_result == "approved" and payload:
+        max_length = await mcp_service.get_output_max_length()
+        stdout = payload.get("stdout", "")
+        stderr = payload.get("stderr", "")
+        body = (stdout or stderr or "(no output)")[:max_length]
+        return [TextContent(type="text", text=(
+            f"**Frida session ({platform} · {label}) on `{target}`:**\n```\n{body}\n```"))]
+    return [TextContent(type="text", text="**Frida run did not complete.**")]
 
 
 # ========== Credentials Management Handlers ==========

@@ -12,7 +12,7 @@ Get AIDA running in under a minute.
 
 Also needed for AI integration:
 - **Python** 3.10+ (`python3 --version`) — for the MCP server and CLI
-- **An AI client** that supports MCP — Claude Code or Kimi CLI recommended (see Step 5)
+- **An AI client** that supports MCP — Claude Code, Codex, Kimi, or Qwen recommended (see Step 5)
 
 > **Exegol users:** AIDA uses `aida-pentest` by default. You can switch to Exegol anytime in Settings.
 
@@ -83,6 +83,133 @@ Then in AIDA Settings, make sure your default container is set to match your Exe
 
 ---
 
+## Localhost Mode
+
+For engagements where you want the LLM to operate directly on your host machine instead of inside a pentesting container, AIDA ships a **localhost** deployment mode.
+
+> **This is a power-user feature.** Commands run with your user's privileges against your real filesystem. AIDA defaults to `closed` command approval in this mode so every command requires an explicit click in **Settings → Commands**, but you should still treat localhost mode with the same care as any remote root shell.
+
+### Enable on setup
+
+```bash
+./start.sh --localhost    # switch to localhost mode (persisted)
+./start.sh --container    # switch back to the pentest container (default)
+```
+
+The selected mode is saved in `.aida/deployment-mode` and used on every subsequent `./start.sh` until you change it.
+
+### What changes
+
+| | Container mode (default) | Localhost mode |
+|---|---|---|
+| Command target | `aida-pentest` (or Exegol) via `docker exec` | Your host, via the `aida-host-agent` daemon |
+| Default approval mode | `open` | `closed` — every command requires approval |
+| Workspace location | `~/.aida/workspaces/` bind-mounted into the pentest container | `~/.aida/workspaces/` directly on the host |
+| Services started | postgres, backend, frontend, docker-proxy, aida-pentest | postgres, backend, frontend (no pentest / proxy) |
+
+### Architecture
+
+The Dockerized backend cannot exec commands on the host directly, so localhost mode ships a small daemon (`tools/host_agent.py`) that runs **on the host** and listens on a Unix socket. `docker-compose.localhost.yml` does an **identity bind-mount** of `~/.aida` into the backend container so every path — socket, token, workspaces — resolves to the same absolute path in both views. That way workspace paths written by the LLM (e.g. `nmap -oN ~/.aida/workspaces/foo/nmap.txt`) work natively on the host without any translation.
+
+```
+host                                            backend container
+──────────────                                  ──────────────────
+~/.aida/host-agent.sock          <—identity—>   ~/.aida/host-agent.sock
+~/.aida/host-agent.token  (0600) <—identity—>   ~/.aida/host-agent.token  (RO)
+~/.aida/workspaces/              <—identity—>   ~/.aida/workspaces/
+```
+
+Every request over the socket is authenticated with a shared-secret token (generated on first `./start.sh --localhost`, stored at `~/.aida/host-agent.token`, mode 0600). Commands execute with the user's own UID/GID, so anything the LLM runs has whatever privileges your shell has — no more, no less.
+
+### Host tool prerequisites
+
+Because commands run on the host instead of inside `aida-pentest`, **you must install pentest tooling yourself.** The LLM will attempt to `apt-get`/`pipx install` missing tools on the fly (subject to command approval), but starting with the essentials in place makes the first assessment smoother.
+
+**Baseline (required):**
+
+```bash
+# Debian / Ubuntu / Mint / Kali
+sudo apt update && sudo apt install -y \
+    bash curl wget git jq openssl netcat-openbsd \
+    python3 python3-pip python3-venv \
+    nmap dnsutils whois
+
+# Arch
+sudo pacman -S --needed bash curl wget git jq openssl gnu-netcat \
+    python python-pip nmap bind whois
+
+# Fedora / RHEL
+sudo dnf install -y bash curl wget git jq openssl nmap-ncat \
+    python3 python3-pip nmap bind-utils whois
+```
+
+**Recommended pentest tools (install what you use):**
+
+```bash
+# On Kali these are all preinstalled. Elsewhere:
+
+# Web content discovery
+sudo apt install -y gobuster ffuf wfuzz
+
+# Web scanners
+sudo apt install -y nikto sqlmap wpscan whatweb
+
+# Auth / credential attacks
+sudo apt install -y hydra medusa john hashcat
+
+# Subdomain / recon (Go tools — install via `go install`)
+go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
+go install github.com/projectdiscovery/httpx/cmd/httpx@latest
+go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
+go install github.com/OJ/gobuster/v3@latest        # if not in apt
+go install github.com/ffuf/ffuf/v2@latest          # if not in apt
+```
+
+**Python libraries the LLM commonly imports** (into the system `python3` — the host-agent invokes it directly, not a venv):
+
+```bash
+# System-wide (Debian family — needs --break-system-packages on 24.04+ or use pipx)
+sudo apt install -y python3-requests python3-bs4 python3-lxml python3-dnspython \
+    python3-cryptography python3-paramiko python3-impacket
+
+# Or via pip if your distro is older
+pip3 install --user requests beautifulsoup4 lxml dnspython cryptography paramiko impacket
+```
+
+**Sanity check** — run this to see what's already there before you start an assessment:
+
+```bash
+for t in nmap gobuster ffuf nikto sqlmap hydra dig whois curl python3; do
+  command -v "$t" >/dev/null && echo "[OK]  $t" || echo "[MISS] $t"
+done
+```
+
+### Verifying the agent
+
+```bash
+# Daemon status
+cat ~/.aida/host-agent.pid
+ps -p "$(cat ~/.aida/host-agent.pid)"
+
+# Logs
+tail -f ~/.aida/host-agent.log
+
+# Socket probe (requires nc with -U)
+echo '{"token":"'"$(cat ~/.aida/host-agent.token)"'","method":"ping"}' \
+  | nc -U ~/.aida/host-agent.sock
+```
+
+### Stopping
+
+`./stop.sh` terminates the host-agent daemon and cleans up its socket automatically. You can also kill it manually:
+
+```bash
+kill "$(cat ~/.aida/host-agent.pid)"
+rm -f ~/.aida/host-agent.sock
+```
+
+---
+
 ## Step 5: Connect Your AI Client
 
 Now you need to hook up AIDA to your AI assistant via MCP.
@@ -92,7 +219,8 @@ Now you need to hook up AIDA to your AI assistant via MCP.
 | AI Client | Recommendation | Setup Method |
 |-----------|----------------|--------------|
 | **Claude Code** | Recommended | Use `aida.py` CLI (automatic) |
-| **Kimi CLI** | Recommended | Use `aida.py` CLI (automatic) |
+| **OpenAI Codex CLI** | Recommended | Use `aida.py --cli codex` (automatic) |
+| **Kimi Code CLI** | Recommended | Use `aida.py` CLI (automatic) |
 | **Qwen Code CLI** | Recommended | Use `aida.py --cli qwen` (automatic) |
 | **Vertex AI / External API** | Recommended | Use `aida.py` with flags |
 | **Antigravity** | Works | Manual MCP import (run `aida.py` once first) |
@@ -103,9 +231,9 @@ Now you need to hook up AIDA to your AI assistant via MCP.
 
 ---
 
-## AIDA CLI — Claude Code & Kimi
+## AIDA CLI — Claude Code, Codex, Kimi & Qwen
 
-The `aida.py` CLI is the recommended way to launch AIDA. It **auto-detects** which AI client you have installed (Claude Code, Kimi CLI, or Qwen Code) and configures everything automatically — MCP server, workspace, preprompt, and authentication.
+The `aida.py` CLI is the recommended way to launch AIDA. It **auto-detects** which AI client you have installed (Claude Code, OpenAI Codex CLI, Kimi Code CLI, or Qwen Code) and configures everything automatically — MCP server, workspace, preprompt, and authentication.
 
 ### Authentication (First Launch)
 
@@ -120,7 +248,7 @@ For non-interactive use (CI, scripts), set `AIDA_TOKEN` in the environment to by
 | Flag | Description |
 |------|-------------|
 | `-a`, `--assessment NAME` | Load a specific assessment directly |
-| `--cli claude\|kimi\|auto` | Force a specific CLI (default: auto-detect) |
+| `--cli claude\|codex\|kimi\|qwen\|auto` | Select a CLI (default: Claude Code; use `auto` for detection) |
 | `-m`, `--model MODEL` | Override the model used |
 | `--preprompt FILE` | Use a custom preprompt file |
 | `-y`, `--yes` | Auto-approve all AI actions |
@@ -177,21 +305,67 @@ You can verify if the MCP server is correctly loaded using `/mcp`
 
 ---
 
-## Kimi CLI
+## OpenAI Codex CLI
 
-**Kimi CLI** is fully supported as an alternative to Claude Code. The AIDA CLI handles the full setup automatically.
+Codex is fully supported through its documented CLI configuration surfaces.
+AIDA injects the preprompt as one-run developer instructions, sets the
+assessment workspace, and adds the AIDA MCP server without modifying your
+global `~/.codex/config.toml`.
 
 ### Prerequisites
 
-Install Kimi CLI:
-
 ```bash
-pip install kimi-cli
-# or
-uv tool install kimi-cli
+npm install -g @openai/codex
+codex login
 ```
 
-Then log in and configure Kimi CLI according to its documentation.
+### Launch AIDA with Codex
+
+```bash
+# Force Codex explicitly
+python3 aida.py --assessment "MyTarget" --cli codex
+
+# Select a model available to your Codex account
+python3 aida.py --assessment "MyTarget" --cli codex --model gpt-5.4
+
+# Pass an initial task
+python3 aida.py --assessment "MyTarget" --cli codex \
+  "Load the assessment and continue reconnaissance"
+```
+
+By default, Codex runs with `workspace-write` sandboxing and `on-request`
+approvals. AIDA MCP commands still follow the command approval mode configured
+in the AIDA dashboard.
+
+`--yes` maps to Codex's full-access bypass flag. It disables Codex approvals
+and sandboxing for that session, so use it only in a trusted, isolated
+environment:
+
+```bash
+python3 aida.py --assessment "MyTarget" --cli codex --yes
+```
+
+Inside Codex, use `/mcp` to verify that `aida-mcp` is active.
+
+---
+
+## Kimi Code CLI
+
+**Kimi Code CLI** is fully supported as an alternative to Claude Code. The AIDA CLI handles the full setup automatically.
+
+> **Note:** Kimi Code CLI is the Node.js successor of the legacy Python `kimi-cli`, which is being phased out. If you still have the old one, run `kimi migrate` after installing to carry over your config, MCP servers, and session history.
+
+### Prerequisites
+
+Install Kimi Code CLI:
+
+```bash
+curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash
+# or
+npm install -g @moonshot-ai/kimi-code
+```
+
+Then log in with `/login` (or `kimi login`) and configure Kimi Code CLI according to its documentation.
 
 ### Launch AIDA with Kimi
 
@@ -210,12 +384,11 @@ python3 aida.py --assessment "MyTarget" --cli kimi --yes
 ```
 
 The CLI automatically:
-- Generates a Kimi agent YAML file (`.aida/kimi-agent.yaml`)
-- Injects the AIDA system prompt with assessment context
-- Configures the MCP server for Kimi
+- Writes project instructions with assessment context to `.kimi-code/AGENTS.md` in the workspace
+- Configures the MCP server for Kimi (`.kimi-code/mcp.json` in the workspace)
 - Sets the working directory to the assessment workspace
 
-> **Note:** `--yes` maps to `--yolo` in Kimi CLI, which auto-approves all tool calls. Use with caution.
+> **Note:** `--yes` maps to `--yolo` in Kimi Code CLI, which auto-approves all tool calls. Use with caution. When a non-interactive prompt is passed, `--yolo` is omitted because Kimi Code CLI auto-approves tool calls in that mode by default.
 
 ---
 
@@ -249,7 +422,7 @@ For Antigravity, Gemini CLI, Claude Desktop, or ChatGPT, you need to manually co
 
 > Antigravity works great if you select Claude. Gemini is OK. Any MCP-compatible client should work.
 >
-> **Prefer Claude Code, Kimi, or Qwen?** Use `aida.py` instead — it handles all of this automatically.
+> **Prefer Claude Code, Codex, Kimi, or Qwen?** Use `aida.py` instead — it handles all of this automatically.
 
 ### Config Paths
 
@@ -431,13 +604,19 @@ sudo lsof -i :31337
 # List available assessments and pick one interactively
 python3 aida.py
 
-# Load a specific assessment (auto-detect CLI)
+# Load a specific assessment (Claude Code by default)
 python3 aida.py -a "MyTarget"
+
+# Auto-detect an installed CLI
+python3 aida.py -a "MyTarget" --cli auto
 
 # Force Claude Code
 python3 aida.py -a "MyTarget" --cli claude
 
-# Force Kimi CLI
+# Force OpenAI Codex CLI
+python3 aida.py -a "MyTarget" --cli codex
+
+# Force Kimi Code CLI
 python3 aida.py -a "MyTarget" --cli kimi
 
 # Auto-approve all actions

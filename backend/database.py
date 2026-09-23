@@ -6,6 +6,9 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sess
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from config import settings
+from utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 # Sync engine (legacy compatibility)
 engine = create_engine(
@@ -74,9 +77,56 @@ def init_db():
             alembic_cfg.set_main_option("script_location", os.path.join(backend_dir, "alembic"))
             alembic_cfg.set_main_option("sqlalchemy.url", str(settings.DATABASE_URL))
             command.upgrade(alembic_cfg, "head")
-    except Exception:
-        pass
+    except Exception as e:
+        # Non-fatal: create_all() below still provisions the schema, but a real
+        # migration/permission error should be visible rather than swallowed.
+        logger.warning("Alembic upgrade failed; falling back to create_all", error=str(e))
 
     # Always run create_all to pick up new models not yet in migrations.
     # create_all is safe: it only creates tables that don't already exist.
     Base.metadata.create_all(bind=engine)
+
+    # create_all does NOT add new columns to pre-existing tables. Ensure simple
+    # column additions exist via idempotent ADD COLUMN IF NOT EXISTS (no migration
+    # files needed, matching project convention).
+    _ensure_columns()
+
+
+def _ensure_columns():
+    """Idempotently add simple new columns to existing tables (Postgres)."""
+    from sqlalchemy import text
+
+    statements = [
+        # ASVS methodology fields on assessments
+        "ALTER TABLE assessments ADD COLUMN IF NOT EXISTS methodology VARCHAR(50) DEFAULT 'standard'",
+        "ALTER TABLE assessments ADD COLUMN IF NOT EXISTS asvs_level INTEGER",
+        "ALTER TABLE assessments ADD COLUMN IF NOT EXISTS asvs_version VARCHAR(20)",
+        # CTF mode on assessments
+        "ALTER TABLE assessments ADD COLUMN IF NOT EXISTS ctf_mode BOOLEAN DEFAULT FALSE",
+        # Stealth & evasion fields on assessments
+        "ALTER TABLE assessments ADD COLUMN IF NOT EXISTS stealth_profile VARCHAR(50) DEFAULT 'normal'",
+        "ALTER TABLE assessments ADD COLUMN IF NOT EXISTS proxy_config TEXT",
+        "ALTER TABLE assessments ADD COLUMN IF NOT EXISTS custom_user_agent TEXT",
+        "ALTER TABLE assessments ADD COLUMN IF NOT EXISTS scan_delay VARCHAR(50)",
+        "ALTER TABLE assessments ADD COLUMN IF NOT EXISTS max_rate INTEGER",
+        "ALTER TABLE assessments ADD COLUMN IF NOT EXISTS decoy_ips TEXT",
+        "ALTER TABLE assessments ADD COLUMN IF NOT EXISTS source_port INTEGER",
+        "ALTER TABLE assessments ADD COLUMN IF NOT EXISTS nmap_timing VARCHAR(10)",
+        "ALTER TABLE assessments ADD COLUMN IF NOT EXISTS fragmentation BOOLEAN DEFAULT FALSE",
+        "ALTER TABLE assessments ADD COLUMN IF NOT EXISTS randomize_hosts BOOLEAN DEFAULT FALSE",
+        "ALTER TABLE assessments ADD COLUMN IF NOT EXISTS extra_nmap_evasion TEXT",
+        "ALTER TABLE assessments ADD COLUMN IF NOT EXISTS nikto_evasion VARCHAR(50)",
+        "ALTER TABLE assessments ADD COLUMN IF NOT EXISTS nikto_tuning VARCHAR(50)",
+        # CTF challenge fields on cards
+        "ALTER TABLE cards ADD COLUMN IF NOT EXISTS flag TEXT",
+        "ALTER TABLE cards ADD COLUMN IF NOT EXISTS flag_status VARCHAR(50)",
+        "ALTER TABLE cards ADD COLUMN IF NOT EXISTS points INTEGER",
+        "ALTER TABLE cards ADD COLUMN IF NOT EXISTS challenge_category VARCHAR(50)",
+    ]
+    try:
+        with engine.begin() as conn:
+            for stmt in statements:
+                conn.execute(text(stmt))
+    except Exception as e:
+        # Non-fatal: a fresh DB already has these via create_all.
+        logger.warning("_ensure_columns failed (non-fatal)", error=str(e))

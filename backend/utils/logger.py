@@ -4,12 +4,33 @@ Provides JSON-formatted logs for production and human-readable logs for developm
 """
 import logging
 import logging.handlers
+import re
 import sys
 from pathlib import Path
 from typing import Any, Dict
 
 import structlog
 from structlog.types import EventDict, Processor
+
+
+# Patterns that redact secrets embedded *inside* string values (the key-name
+# match below only catches secrets stored under an obviously-named key).
+_SECRET_VALUE_PATTERNS = [
+    # Authorization: Bearer <token>
+    (re.compile(r'(?i)\bbearer\s+[A-Za-z0-9._\-]+'), 'Bearer ***REDACTED***'),
+    # JWTs (header.payload.signature)
+    (re.compile(r'\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+'), '***REDACTED_JWT***'),
+    # token=... / api_key=... / password=... in query strings or free text
+    (re.compile(r'(?i)\b(token|api_key|apikey|access_token|secret|password)=[^&\s"\']+'),
+     r'\1=***REDACTED***'),
+]
+
+
+def _redact_value(value: str) -> str:
+    """Redact secret-looking substrings from a single string value."""
+    for pattern, repl in _SECRET_VALUE_PATTERNS:
+        value = pattern.sub(repl, value)
+    return value
 
 
 def add_severity_level(logger: Any, method_name: str, event_dict: EventDict) -> EventDict:
@@ -47,7 +68,14 @@ def filter_sensitive_data(logger: Any, method_name: str, event_dict: EventDict) 
             elif isinstance(value, dict):
                 filtered[key] = _filter_dict(value)
             elif isinstance(value, list):
-                filtered[key] = [_filter_dict(item) if isinstance(item, dict) else item for item in value]
+                filtered[key] = [
+                    _filter_dict(item) if isinstance(item, dict)
+                    else _redact_value(item) if isinstance(item, str)
+                    else item
+                    for item in value
+                ]
+            elif isinstance(value, str):
+                filtered[key] = _redact_value(value)
             else:
                 filtered[key] = value
         return filtered
@@ -84,7 +112,7 @@ def setup_logging(
     # When both file and console logging are disabled (e.g. MCP mode), silence all
     # output by replacing any handlers basicConfig would add with a NullHandler.
     # Without this, basicConfig unconditionally attaches a StreamHandler(stderr)
-    # which leaks structured log lines into the terminal via kimi-cli / Claude Code.
+    # which leaks structured log lines into the terminal via Kimi Code CLI / Claude Code.
     if not enable_file_logging and not enable_console_logging:
         root_logger = logging.getLogger()
         root_logger.handlers = []

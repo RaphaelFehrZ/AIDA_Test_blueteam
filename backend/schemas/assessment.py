@@ -58,7 +58,13 @@ class AssessmentBase(BaseModel):
 
 class AssessmentCreate(AssessmentBase):
     """Schema for creating a new assessment"""
-    pass
+    methodology: Optional[str] = "standard"   # "standard" | "asvs"
+    asvs_level: Optional[int] = None           # 1 | 2 | 3 (ASVS only)
+    # Chapter subset to seed (e.g. ["V1","V6"]); not a column — consumed by seeding
+    asvs_chapters: Optional[list[str]] = None
+    # Custom explicit selection (e.g. ["V1.2.1","V6.2","V11"]); tokens may be
+    # requirement / section / chapter ids. Takes precedence over level+chapters.
+    asvs_req_ids: Optional[list[str]] = None
 
 
 class AssessmentUpdate(BaseModel):
@@ -119,6 +125,9 @@ class AssessmentResponse(AssessmentBase):
     workspace_path: Optional[str]
     container_name: Optional[str]
     folder_id: Optional[int] = None
+    methodology: Optional[str] = "standard"
+    asvs_level: Optional[int] = None
+    asvs_version: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
@@ -158,6 +167,10 @@ class AssessmentListResponse(BaseModel):
     nikto_evasion: Optional[str] = None
     nikto_tuning: Optional[str] = None
     ctf_mode: Optional[bool] = False
+
+    methodology: Optional[str] = "standard"
+    asvs_level: Optional[int] = None
+    asvs_version: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 

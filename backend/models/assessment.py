@@ -55,6 +55,11 @@ class Assessment(Base):
     nikto_evasion = Column(String(50))  # nikto -evasion codes
     nikto_tuning = Column(String(50))  # nikto -Tuning codes
 
+    # Methodology (standard discovery-driven loop vs OWASP ASVS grid)
+    methodology = Column(String(50), default="standard")  # "standard" | "asvs"
+    asvs_level = Column(Integer, nullable=True)            # 1 | 2 | 3 (ASVS only)
+    asvs_version = Column(String(20), nullable=True)       # e.g. "5.0.0"
+
     # Folder Management (optional organization)
     folder_id = Column(Integer, ForeignKey('folders.id'), nullable=True)
 
@@ -68,4 +73,5 @@ class Assessment(Base):
     credentials_list = relationship("Credential", back_populates="assessment", cascade="all, delete-orphan")
     pending_commands = relationship("PendingCommand", back_populates="assessment", cascade="all, delete-orphan")
     timeline_events = relationship("TimelineEvent", back_populates="assessment", cascade="all, delete-orphan")
+    asvs_requirements = relationship("AsvsRequirement", back_populates="assessment", cascade="all, delete-orphan")
 

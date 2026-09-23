@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 AIDA CLI Launcher - Professional Python Implementation
-AI-Driven Security Assessment - Intelligent wrapper for Claude Code, Kimi CLI & Qwen Code
+AI-Driven Security Assessment - Intelligent wrapper for Claude Code, Codex CLI, Kimi Code CLI & Qwen Code
 """
 import os
 import re
@@ -89,14 +89,18 @@ console = Console()
 AIDA_ROOT = Path(__file__).parent.absolute()
 AIDA_CONFIG_DIR = AIDA_ROOT / ".aida"
 PREPROMPT_FILE = AIDA_ROOT / "Docs" / "PrePrompt.txt"
+PREPROMPT_ASVS_FILE = AIDA_ROOT / "Docs" / "PrePrompt-ASVS.txt"
 MCP_SERVER_PATH = AIDA_ROOT / "backend" / "mcp" / "aida_mcp_server.py"
 MCP_CONFIG_FILE = AIDA_CONFIG_DIR / "mcp-config.json"
 SESSION_FILE = AIDA_CONFIG_DIR / "session"
 API_KEY_FILE = AIDA_CONFIG_DIR / "api-key"
 
-# Kimi-specific config files
-KIMI_AGENT_FILE = AIDA_CONFIG_DIR / "kimi-agent.yaml"
-KIMI_SYSTEM_PROMPT_FILE = AIDA_CONFIG_DIR / "kimi-system.md"
+# Kimi Code CLI project-level config directory, written inside the assessment
+# workspace (which becomes the CLI's working directory). The legacy Python
+# kimi-cli took a per-launch agent file via --agent-file; the Node.js Kimi Code
+# CLI dropped that flag and loads instructions from .kimi-code/AGENTS.md and
+# MCP servers from .kimi-code/mcp.json in the working directory instead.
+KIMI_WORKSPACE_CONFIG_DIR = ".kimi-code"
 
 DEFAULT_MODEL = "claude-sonnet-4-5"
 DEFAULT_PERMISSION = "default"
@@ -105,7 +109,7 @@ DEFAULT_BACKEND = "http://localhost:8000/api"
 CONTAINER_PREFS_FILE = AIDA_CONFIG_DIR / "container-preference"
 
 # CLI types
-CLIType = Literal["claude", "kimi", "qwen"]
+CLIType = Literal["claude", "codex", "kimi", "qwen"]
 
 
 _INCLUDE_RE = re.compile(r"\{\{\s*INCLUDE:\s*([^}\s]+)\s*\}\}")
@@ -277,12 +281,31 @@ def generate_mcp_http_config(url: str, api_key: str, quiet=False) -> None:
         console.print(f"[dim]  Endpoint: {url}[/dim]")
 
 
-def generate_kimi_agent_file(preprompt_content: str, assessment_name: Optional[str], 
-                             assessment_id: Optional[str], container_name: Optional[str],
-                             quiet=False) -> Path:
-    """Generate Kimi agent YAML file and system prompt markdown"""
-    AIDA_CONFIG_DIR.mkdir(exist_ok=True)
-    
+def generate_kimi_workspace_config(preprompt_content: str, assessment_name: Optional[str],
+                                   assessment_id: Optional[str], container_name: Optional[str],
+                                   workspace_path: str, quiet=False) -> Path:
+    """Write Kimi Code CLI project instructions (AGENTS.md) into the workspace"""
+    kimi_dir = Path(workspace_path) / KIMI_WORKSPACE_CONFIG_DIR
+
+    # Like the Qwen branch, config must live in the workspace: there is no
+    # per-launch flag to point Kimi Code CLI at a file elsewhere, and we
+    # don't touch ~/.kimi-code/ to avoid cross-assessment config pollution.
+    try:
+        kimi_dir.mkdir(parents=True, exist_ok=True)
+        test_file = kimi_dir / ".write_test"
+        test_file.write_text("test")
+        test_file.unlink()
+    except (PermissionError, OSError) as e:
+        if not quiet:
+            console.print("[red]✗ Cannot write to workspace configuration directory[/red]")
+            console.print(f"[dim]  Error: {e}[/dim]")
+            console.print("\n[yellow]Troubleshooting:[/yellow]")
+            console.print("  • Check workspace permissions:")
+            console.print(f"    [cyan]ls -la {workspace_path}[/cyan]")
+            console.print("  • Fix ownership:")
+            console.print(f"    [cyan]sudo chown -R $USER:$USER {workspace_path}[/cyan]\n")
+        sys.exit(1)
+
     # Enhance preprompt with assessment context for Kimi
     enhanced_prompt = preprompt_content
     if assessment_name:
@@ -294,36 +317,27 @@ def generate_kimi_agent_file(preprompt_content: str, assessment_name: Optional[s
 
 The assessment workspace is ready. Use your standard tools to work with files and execute commands.
 """
-    
-    # Write system prompt markdown
-    KIMI_SYSTEM_PROMPT_FILE.write_text(enhanced_prompt)
-    
-    # Write agent YAML file
-    agent_yaml = f"""version: 1
-agent:
-  name: aida-security
-  extend: default
-  system_prompt_path: {KIMI_SYSTEM_PROMPT_FILE.absolute()}
-  # AIDA-specific configuration
-  system_prompt_args:
-    AIDA_VERSION: "1.0"
-    ASSESSMENT_NAME: "{assessment_name or 'None'}"
-"""
-    
-    KIMI_AGENT_FILE.write_text(agent_yaml)
-    
+
+    agents_file = kimi_dir / "AGENTS.md"
+    agents_file.write_text(enhanced_prompt)
+
     if not quiet:
-        console.print(f"[dim]✓ Kimi agent config: {KIMI_AGENT_FILE.name}[/dim]")
-    
-    return KIMI_AGENT_FILE
+        console.print(f"[dim]✓ Kimi instructions: {agents_file}[/dim]")
+
+    return agents_file
 
 
 def detect_cli() -> CLIType:
-    """Detect which CLI is available (claude, kimi, or qwen)"""
+    """Detect which supported AI CLI is available."""
     # Check for Claude
     result = subprocess.run(["which", "claude"], capture_output=True)
     if result.returncode == 0:
         return "claude"
+
+    # Check for OpenAI Codex
+    result = subprocess.run(["which", "codex"], capture_output=True)
+    if result.returncode == 0:
+        return "codex"
 
     # Check for Kimi
     result = subprocess.run(["which", "kimi"], capture_output=True)
@@ -336,6 +350,63 @@ def detect_cli() -> CLIType:
         return "qwen"
 
     return None
+
+
+def _toml_value(value) -> str:
+    """Serialize the simple values used by Codex -c overrides as TOML."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, str):
+        # JSON strings use the same escaping needed by TOML basic strings.
+        return json.dumps(value)
+    if isinstance(value, list):
+        return "[" + ", ".join(_toml_value(item) for item in value) + "]"
+    raise TypeError(f"Unsupported TOML value type: {type(value).__name__}")
+
+
+def _codex_override(key: str, value) -> list[str]:
+    """Build one Codex CLI configuration override."""
+    return ["--config", f"{key}={_toml_value(value)}"]
+
+
+def build_codex_mcp_args(
+    *,
+    python_bin: Optional[str] = None,
+    http_url: Optional[str] = None,
+) -> list[str]:
+    """Build ephemeral Codex MCP configuration without changing user config.
+
+    Secrets are forwarded by environment-variable name and never embedded in
+    argv or written to Codex's persistent config.
+    """
+    prefix = "mcp_servers.aida-mcp"
+    args = []
+
+    if http_url:
+        args.extend(_codex_override(f"{prefix}.url", http_url))
+        args.extend(_codex_override(
+            f"{prefix}.bearer_token_env_var",
+            "AIDA_MCP_API_KEY",
+        ))
+    else:
+        args.extend(_codex_override(f"{prefix}.command", python_bin or "python3"))
+        args.extend(_codex_override(
+            f"{prefix}.args",
+            [str(MCP_SERVER_PATH.absolute())],
+        ))
+        args.extend(_codex_override(
+            f"{prefix}.env_vars",
+            ["AIDA_TOKEN", "BACKEND_API_URL", "DATABASE_URL", "PYTHONPATH"],
+        ))
+
+    args.extend(_codex_override(f"{prefix}.required", True))
+    args.extend(_codex_override(f"{prefix}.startup_timeout_sec", 30))
+    # Scans and AIDA's human command-approval flow can legitimately take
+    # longer than Codex's default 60-second MCP timeout.
+    args.extend(_codex_override(f"{prefix}.tool_timeout_sec", 900))
+    return args
 
 
 def _read_file_token(path: Path) -> Optional[str]:
@@ -506,6 +577,19 @@ def translate_host_path(path: str) -> str:
     return f"/mnt/{drive}/{rest}" if rest else f"/mnt/{drive}"
 
 
+def fetch_assessment_methodology(assessment_id: int, backend_url: str, token: str = "") -> str:
+    """Return an assessment's methodology ('standard' | 'asvs'); 'standard' on any error."""
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            response = client.get(f"{backend_url}/assessments/{assessment_id}", headers=headers)
+            if response.status_code == 200:
+                return response.json().get("methodology") or "standard"
+    except Exception:
+        pass
+    return "standard"
+
+
 def resolve_workspace(assessment_name: str, backend_url: str, token: str = "") -> Optional[dict]:
     """Resolve assessment workspace via API, with retry on transient network errors"""
     import time
@@ -571,15 +655,19 @@ def show_assessment_not_found(assessment_name: str, backend_url: str):
 
 
 def show_cli_not_found():
-    """Display error when neither Claude nor Kimi nor Qwen CLI is found"""
+    """Display error when no supported AI CLI is found."""
     console.print("[red]✗ No compatible AI CLI found[/red]\n")
     console.print("Please install one of the following:\n")
     console.print("[bold]Claude Code:[/bold]")
     console.print("  [cyan]curl -fsSL https://claude.ai/install.sh | bash[/cyan]\n")
-    console.print("[bold]Kimi CLI:[/bold]")
-    console.print("  [cyan]pip install kimi-cli[/cyan]")
+    console.print("[bold]OpenAI Codex CLI:[/bold]")
+    console.print("  [cyan]npm install -g @openai/codex[/cyan]")
+    console.print("  then")
+    console.print("  [cyan]codex login[/cyan]\n")
+    console.print("[bold]Kimi Code CLI:[/bold]")
+    console.print("  [cyan]curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash[/cyan]")
     console.print("  or")
-    console.print("  [cyan]uv tool install kimi-cli[/cyan]\n")
+    console.print("  [cyan]npm install -g @moonshot-ai/kimi-code[/cyan]\n")
     console.print("[bold]Qwen Code CLI:[/bold]")
     console.print("  [cyan]npm install -g @qwen-code/qwen-code@latest[/cyan]")
     console.print("  or")
@@ -601,14 +689,18 @@ def show_cli_not_found():
               help="Bearer API key for the HTTP MCP transport (env: AIDA_MCP_API_KEY)")
 @click.option("--debug", is_flag=True, help="Enable debug mode")
 @click.option("-q", "--quiet", is_flag=True, help="Quiet mode (minimal output)")
-@click.option("--cli", "cli_choice", type=click.Choice(["claude", "kimi", "qwen", "auto"]), default="auto",
-              help="Which CLI to use (default: auto-detect)")
-@click.option("-y", "--yes", is_flag=True, help="Auto-approve all actions (Kimi/Qwen: --yolo, Claude: permission-mode=accept)")
+@click.option("--cli", "cli_choice", type=click.Choice(["claude", "codex", "kimi", "qwen", "auto"]), default="claude",
+              show_default=True, help="Which CLI to use; use auto for fallback detection")
+@click.option(
+    "-y", "--yes",
+    is_flag=True,
+    help="Auto-approve all actions (Codex/Kimi/Qwen: full-access/yolo, Claude: permission-mode=accept)",
+)
 @click.argument("prompt", nargs=-1)
 def main(assessment, model, permission_mode, preprompt, base_url, api_key, no_mcp, http_url, mcp_api_key, debug, quiet, cli_choice, yes, prompt):
     """AIDA CLI Launcher - AI-Driven Security Assessment
 
-    Supports Claude Code, Kimi CLI, and Qwen Code CLI as underlying AI agents.
+    Supports Claude Code, OpenAI Codex CLI, Kimi Code CLI, and Qwen Code CLI as underlying AI agents.
     """
     
     # Clear terminal for clean start
@@ -762,6 +854,7 @@ def main(assessment, model, permission_mode, preprompt, base_url, api_key, no_mc
             sys.exit(1)
     
     # MCP Configuration
+    codex_mcp_python = None
     if not no_mcp:
         if http_url or os.getenv("AIDA_MCP_HTTP_URL"):
             # HTTP transport — don't spawn a subprocess, point the client at the URL.
@@ -773,12 +866,24 @@ def main(assessment, model, permission_mode, preprompt, base_url, api_key, no_mc
                     "Pass --mcp-api-key or set AIDA_MCP_API_KEY.[/red]\n"
                 )
                 sys.exit(1)
-            generate_mcp_http_config(url, key, quiet)
+            # Codex receives an ephemeral -c configuration later. Other
+            # clients consume the generated JSON config.
+            if cli_type != "codex":
+                generate_mcp_http_config(url, key, quiet)
         else:
             if not MCP_SERVER_PATH.exists():
                 console.print(f"[red]✗ MCP server not found: {MCP_SERVER_PATH}[/red]\n")
                 sys.exit(1)
-            generate_mcp_config(db_url, token, quiet)
+            if cli_type == "codex":
+                try:
+                    codex_mcp_python = str(ensure_backend_venv(quiet).absolute())
+                except Exception as e:
+                    if not quiet:
+                        console.print(f"[yellow]⚠ Could not setup backend venv: {e}[/yellow]")
+                        console.print("[yellow]Falling back to system Python[/yellow]")
+                    codex_mcp_python = "python3"
+            else:
+                generate_mcp_config(db_url, token, quiet)
     
     # Workspace resolution
     workspace_path = str(AIDA_ROOT)
@@ -810,6 +915,21 @@ def main(assessment, model, permission_mode, preprompt, base_url, api_key, no_mc
             console.print(f"[dim]✓ Container: {container_name}[/dim]")
             console.print(f"[dim]✓ Workspace: {workspace_path}[/dim]\n")
 
+        # ASVS assessments use a methodology-specific preprompt (grid-walking loop).
+        # A user-supplied --preprompt always wins.
+        if not preprompt:
+            methodology = fetch_assessment_methodology(assessment_id, backend_url, token)
+            if methodology == "asvs" and PREPROMPT_ASVS_FILE.exists():
+                try:
+                    preprompt_content = PREPROMPT_ASVS_FILE.read_text()
+                    if not quiet:
+                        console.print(
+                            f"[green]✓ ASVS assessment — using methodology preprompt:[/green] "
+                            f"[cyan]{PREPROMPT_ASVS_FILE.name}[/cyan]\n"
+                        )
+                except Exception as e:
+                    console.print(f"[yellow]⚠ Failed to read ASVS preprompt, using default: {e}[/yellow]\n")
+
         # Enhance preprompt with assessment context for all CLI types
         preprompt_content += f"""
 
@@ -818,6 +938,7 @@ def main(assessment, model, permission_mode, preprompt, base_url, api_key, no_mc
 **{assessment}** (ID: {assessment_id}) - Container: {container_name}
 
 The assessment workspace is ready. Use your standard tools to work with files and execute commands.
+Before using assessment-scoped AIDA MCP tools, call `load_assessment(name="{assessment}")`.
 """
     
     # Build CLI command based on selected CLI type
@@ -863,42 +984,102 @@ The assessment workspace is ready. Use your standard tools to work with files an
 
         cli_name = "Claude Code"
 
+    elif cli_type == "codex":
+        # Codex has no --system-prompt flag. developer_instructions is the
+        # documented one-run configuration surface for additional behavioral
+        # instructions and preserves Codex's built-in base instructions.
+        cli_args = [
+            "codex",
+            "--cd", workspace_path,
+            "--sandbox", "workspace-write",
+            "--ask-for-approval", "on-request",
+        ]
+        cli_args.extend(_codex_override(
+            "developer_instructions",
+            preprompt_content,
+        ))
+
+        if explicit_model:
+            cli_args.extend(["--model", explicit_model])
+
+        env = os.environ.copy()
+
+        if not no_mcp:
+            if http_url or os.getenv("AIDA_MCP_HTTP_URL"):
+                url = http_url or os.getenv("AIDA_MCP_HTTP_URL")
+                key = mcp_api_key or os.getenv("AIDA_MCP_API_KEY", "")
+                env["AIDA_MCP_API_KEY"] = key
+                cli_args.extend(build_codex_mcp_args(http_url=url))
+            else:
+                env.update({
+                    "AIDA_TOKEN": token,
+                    "BACKEND_API_URL": backend_url,
+                    "DATABASE_URL": db_url,
+                    "PYTHONPATH": str((AIDA_ROOT / "backend").absolute()),
+                })
+                cli_args.extend(build_codex_mcp_args(
+                    python_bin=codex_mcp_python or "python3",
+                ))
+
+        # The AIDA project contains launcher/backend context that is useful
+        # when the assessment workspace is a separate bind mount.
+        if workspace_path != str(AIDA_ROOT):
+            cli_args.extend(["--add-dir", str(AIDA_ROOT)])
+
+        if yes:
+            # Match the existing AIDA --yes contract. This is intentionally
+            # explicit because Codex otherwise keeps its workspace sandbox.
+            approval_index = cli_args.index("--ask-for-approval")
+            del cli_args[approval_index:approval_index + 2]
+            sandbox_index = cli_args.index("--sandbox")
+            del cli_args[sandbox_index:sandbox_index + 2]
+            cli_args.append("--dangerously-bypass-approvals-and-sandbox")
+
+        if prompt:
+            cli_args.append(" ".join(prompt))
+
+        cli_name = "OpenAI Codex CLI"
+
     elif cli_type == "kimi":
-        # Build Kimi CLI command
-        # Generate agent file for Kimi
-        agent_file = generate_kimi_agent_file(
-            preprompt_content, assessment, assessment_id, container_name, quiet
+        # Build Kimi Code CLI command (Node.js successor of the legacy Python
+        # kimi-cli). The old flags --agent-file, --work-dir, --mcp-config-file
+        # and --debug no longer exist:
+        # - instructions go to <workspace>/.kimi-code/AGENTS.md
+        # - MCP servers go to <workspace>/.kimi-code/mcp.json
+        # - the working directory is set via chdir before exec
+        generate_kimi_workspace_config(
+            preprompt_content, assessment, assessment_id, container_name,
+            workspace_path, quiet
         )
 
-        cli_args = [
-            "kimi",
-            "--agent-file", str(agent_file),
-            "--work-dir", workspace_path,
-        ]
+        # Same mcpServers JSON format AIDA already generates for the other CLIs;
+        # Kimi Code CLI picks it up from the project-level mcp.json.
+        if not no_mcp and MCP_CONFIG_FILE.exists():
+            kimi_mcp_file = Path(workspace_path) / KIMI_WORKSPACE_CONFIG_DIR / "mcp.json"
+            kimi_mcp_file.write_text(MCP_CONFIG_FILE.read_text())
+            # Token is embedded in plaintext — restrict to owner only.
+            kimi_mcp_file.chmod(0o600)
+            if not quiet:
+                console.print(f"[dim]✓ Kimi MCP config: {kimi_mcp_file}[/dim]")
+
+        cli_args = ["kimi"]
 
         # Add model if specified
         if explicit_model:
             cli_args.extend(["--model", explicit_model])
 
-        # Add MCP config
-        if not no_mcp:
-            cli_args.extend(["--mcp-config-file", str(MCP_CONFIG_FILE)])
-
-        if debug:
-            cli_args.append("--debug")
-
-        # Add yolo mode for auto-approval (--yes flag or explicitly requested)
-        if yes:
-            cli_args.append("--yolo")
-
-        # Add prompt if provided
         if prompt:
+            # Non-interactive mode auto-approves tool calls by default and
+            # rejects --yolo, so the two must stay mutually exclusive.
             cli_args.extend(["--prompt", " ".join(prompt)])
+        elif yes:
+            # Add yolo mode for auto-approval (--yes flag or explicitly requested)
+            cli_args.append("--yolo")
 
         # Kimi doesn't need the env vars for API (uses its own config)
         env = os.environ.copy()
 
-        cli_name = "Kimi CLI"
+        cli_name = "Kimi Code CLI"
 
     else:  # cli_type == "qwen"
         # Build Qwen Code CLI command
@@ -1022,6 +1203,8 @@ The assessment workspace is ready. Use your standard tools to work with files an
         # Determine permission display text
         if cli_type == "claude":
             permission_text = "accept (auto)" if yes else permission_mode
+        elif cli_type == "codex":
+            permission_text = "full access (auto)" if yes else "workspace-write / on-request"
         else:
             permission_text = "yolo (auto)" if yes else "interactive"
 
@@ -1062,7 +1245,11 @@ The assessment workspace is ready. Use your standard tools to work with files an
         if cli_type == "claude":
             os.chdir(workspace_path)
             os.execvpe("claude", cli_args, env)
+        elif cli_type == "codex":
+            os.execvpe("codex", cli_args, env)
         elif cli_type == "kimi":
+            # Kimi Code CLI has no --work-dir flag: it runs in the cwd
+            os.chdir(workspace_path)
             os.execvpe("kimi", cli_args, env)
         else:  # qwen
             os.chdir(workspace_path)

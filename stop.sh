@@ -39,6 +39,24 @@ if pkill -f "tools/helper.py" 2>/dev/null; then
 fi
 pkill -f "folder_opener.py" 2>/dev/null || true  # legacy name
 
+# Stop host-agent daemon (localhost deployment mode). Prefer the recorded
+# PID file so we don't accidentally kill an unrelated `python3 host_agent.py`
+# the user might have started manually.
+HOST_AGENT_PID="$HOME/.aida/host-agent.pid"
+HOST_AGENT_SOCK="$HOME/.aida/host-agent.sock"
+if [[ -f "$HOST_AGENT_PID" ]]; then
+    pid=$(cat "$HOST_AGENT_PID" 2>/dev/null || true)
+    if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+        if kill "$pid" 2>/dev/null; then
+            log "Stopped host-agent (pid $pid)"
+        fi
+    fi
+    rm -f "$HOST_AGENT_PID"
+fi
+# Fallback cleanup — catches agents not tracked by pid file (e.g. manual runs).
+pkill -f "tools/host_agent.py" 2>/dev/null || true
+rm -f "$HOST_AGENT_SOCK" 2>/dev/null || true
+
 # Check current state
 RUNNING=$($COMPOSE_CMD ps --status running -q 2>/dev/null | wc -l | tr -d ' ')
 STOPPED=$($COMPOSE_CMD ps --status exited -q 2>/dev/null | wc -l | tr -d ' ')
@@ -72,6 +90,11 @@ elif echo "$ALL_NAMES" | grep -q "^aida_frontend$" \
     STOP_FILES="-f docker-compose.yml -f docker-compose.prod.yml"
 else
     STOP_FILES=""
+fi
+
+# Include custom Caddy port overrides if present
+if [[ -f "$SCRIPT_DIR/.aida/docker-compose.caddy-reset.yml" && -f "$SCRIPT_DIR/.aida/docker-compose.caddy-ports.yml" ]]; then
+    STOP_FILES="$STOP_FILES -f .aida/docker-compose.caddy-reset.yml -f .aida/docker-compose.caddy-ports.yml"
 fi
 
 log "Stopping $RUNNING container(s)..."

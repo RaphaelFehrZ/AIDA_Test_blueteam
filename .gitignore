@@ -69,6 +69,9 @@ stop-legacy.sh
 docker-compose.override.yml
 switch-db.sh
 
+# Local helper scripts kept out of the repo (provided/run per-host)
+/tools/setup_mobile_host.sh
+
 # Artifacts directory (Gemini/Antigravity)
 .gemini/
 

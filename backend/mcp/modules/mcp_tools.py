@@ -743,6 +743,31 @@ def get_tool_definitions() -> List[Tool]:
             }
         ),
 
+        # ========== Automated recon pipeline ==========
+        Tool(
+            name="auto_recon",
+            description="Fire a one-shot automated recon sweep at a target (URL/domain/IP): nmap port+service scan, httpx/whatweb tech detect, TLS cert, ffuf directory fuzzing, subdomain + vhost enumeration, katana crawl, nuclei templated scan, robots/sitemap + historical URLs. Runs in the BACKGROUND and writes results into a workspace folder; poll its summary.txt and read per-step files, then record real findings as cards.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "target": {
+                        "type": "string",
+                        "description": "Target URL, domain, or IP (e.g. 'firefox.htb', 'http://10.10.10.10:8080')"
+                    },
+                    "mode": {
+                        "type": "string",
+                        "enum": ["thorough", "quick"],
+                        "description": "thorough (all TCP ports, big wordlists, full nuclei) or quick (top ports, fast pass). Default: thorough"
+                    },
+                    "out_dir": {
+                        "type": "string",
+                        "description": "Output folder in the workspace (default: recon_<target>)"
+                    }
+                },
+                "required": ["target"]
+            }
+        ),
+
         # ========== Mobile App Testing (physical device over USB host-agent) ==========
         # Dynamic tools require AIDA in 'localhost' deployment mode (the USB device
         # is on the host, not in the pentest container). mobile_static_scan works in

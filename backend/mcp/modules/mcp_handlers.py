@@ -156,6 +156,9 @@ async def handle_tool_call(name: str, arguments: dict, mcp_service) -> List[Text
         elif name == "tech_detection":
             return await _handle_tech_detection(arguments, mcp_service)
 
+        elif name == "auto_recon":
+            return await _handle_auto_recon(arguments, mcp_service)
+
         # ========== Mobile App Testing ==========
 
         elif name == "mobile_devices":
@@ -1670,6 +1673,52 @@ async def _handle_tech_detection(arguments: dict, mcp_service) -> List[TextConte
             response += f"Error with {cmd_result['command']}: {cmd_result['error']}\n\n"
 
     return [TextContent(type="text", text=response)]
+
+
+# ========== Automated Recon Handler ==========
+
+async def _handle_auto_recon(arguments: dict, mcp_service) -> List[TextContent]:
+    """Launch the aida-auto-recon pipeline in the background against a target.
+
+    A thorough sweep (all ports + big wordlists + nuclei) easily outruns the
+    command timeout, so we launch it detached (setsid) and let it stream results
+    into a workspace folder. The agent then polls summary.txt / reads per-step
+    files. The launch itself goes through the standard approval/logging path.
+    """
+    import re
+    target = (arguments.get("target") or "").strip()
+    if not target:
+        return [TextContent(type="text", text="Error: 'target' is required.")]
+    mode = arguments.get("mode", "thorough")
+
+    if not await mcp_service.check_tool_availability("aida-auto-recon"):
+        return [TextContent(type="text", text=(
+            "`aida-auto-recon` isn't available in the current execution environment.\n"
+            "- **Container mode:** rebuild the pentest image (it bakes the script in as `aida-auto-recon`).\n"
+            "- **Localhost mode:** put `pentest/auto_recon.sh` on your PATH as `aida-auto-recon` "
+            "(e.g. `sudo ln -s \"$PWD/pentest/auto_recon.sh\" /usr/local/bin/aida-auto-recon`)."))]
+
+    host = re.sub(r"^[a-zA-Z]+://", "", target).split("/")[0].split(":")[0]
+    safe = re.sub(r"[^a-zA-Z0-9._-]", "_", host)
+    out_dir = arguments.get("out_dir") or f"recon_{safe}"
+
+    quick = " --quick" if mode == "quick" else ""
+    inner = f"aida-auto-recon {shlex.quote(target)} {shlex.quote(out_dir)}{quick}"
+    # Detach so a long thorough sweep survives past the launching command.
+    command = (f"setsid bash -c {shlex.quote(inner)} >/dev/null 2>&1 & "
+               f"echo 'auto-recon ({mode}) launched -> {out_dir}/summary.txt'")
+
+    result = await _handle_execute({"command": command, "phase": "recon"}, mcp_service)
+
+    guidance = TextContent(type="text", text=(
+        f"**Auto-recon ({mode}) on `{target}`.** When it runs, results stream into "
+        f"`{out_dir}/`:\n"
+        f"- `summary.txt` — progress + per-step line counts\n"
+        f"- `nmap.txt`, `httpx.txt`, `ffuf_dirs.csv`, `subdomains.txt`, `ffuf_vhosts.csv`, "
+        f"`katana.txt`, `nuclei.txt`, ...\n"
+        f"Poll with `execute(\"ls -la {out_dir}\")` / read the files, then log real findings "
+        f"with `add_card(...)`. (It runs in the background — give it time on thorough mode.)"))
+    return list(result) + [guidance]
 
 
 # ========== Mobile App Testing Handlers ==========
